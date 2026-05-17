@@ -8,6 +8,7 @@ on:
       - '**/*.md'
       - '.github/workflows/**'  # all workflow YAML changes — none test application code; use workflow_dispatch to validate ci.yml edits
       - 'Jenkinsfile'            # Jenkins pipeline — separate stack, unrelated to GHA CI
+      - 'jenkins/**'             # local Jenkins instance setup (Dockerfile, compose) — also Jenkins-side only
   pull_request:
     branches: [main]
     paths-ignore:
@@ -15,6 +16,7 @@ on:
       - '**/*.md'
       - '.github/workflows/**'
       - 'Jenkinsfile'
+      - 'jenkins/**'
   workflow_dispatch:
 
 permissions:

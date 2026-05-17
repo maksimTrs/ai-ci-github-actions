@@ -1,151 +1,210 @@
-# Bug Tracker Pro
+# Bug Tracker — CI/CD Reference Pipelines
 
-A full-stack bug tracking application built with Go (backend) and Next.js (frontend). The application allows users to create, read, update, and delete bug reports, with support for comments and priority levels.
+A reference implementation of QA test-automation CI/CD on two parallel stacks: **GitHub Actions** and **Jenkins**.
 
-## Features
+The bug-tracker application (Go backend, Next.js frontend) is the test substrate — the value of this repository lies in how the pipelines are designed, what they enforce, and how the two stacks stay functionally equivalent.
 
-- Create and manage bug reports
-- Add comments to bugs
-- Set priority levels and status
-- Real-time updates
-- Responsive design
-- Comprehensive test coverage (unit, API, E2E, and performance tests)
+For application setup, local dev commands, and stack details, see [APP.md](./APP.md).
 
-## Prerequisites
+---
 
-Before running the application, ensure you have the following installed:
+## Repository Layout
 
-- [Node.js](https://nodejs.org/) (v20 or later)
-- [Go](https://go.dev/) (v1.21 or later)
-- [Docker and Docker Compose](https://docs.docker.com/)
-- [Git](https://git-scm.com/)
+```
+.github/
+├── workflows/                     # GHA workflow files (see Workflow Matrix below)
+│   ├── ci.yml                     #   main CI — tests + reporting + GitHub Pages
+│   ├── gha-review.yml             #   AI review of .github/workflows + .github/actions
+│   ├── jenkinsfile-review.yml     #   AI review of Jenkinsfile changes
+│   ├── claude-code-review.yml     #   AI review of application code
+│   └── claude.yml                 #   @claude mention responder
+├── actions/
+│   └── publish-test-results/      # Composite action — JUnit check + HTML artifact
+└── pages/
+    └── index.template.html        # Landing page template for Pages site
 
-## Quick Start with Docker Compose
+jenkins/                            # Dockerfile + docker-compose for a local Jenkins instance
+Jenkinsfile                         # Declarative pipeline (mirrors ci.yml stages)
 
-The easiest way to run the application is using Docker Compose:
+bugtracker-backend/                 # Go application (test substrate)
+bugtracker-frontend/                # Next.js application (test substrate)
+tests-api/                          # Playwright API tests
+tests-e2e/                          # Playwright browser tests
+tests-perf/                         # k6 performance tests
 
-```bash
-# Clone the repository
-git clone https://github.com/james-willett/bug-tracker.git
-cd bug-tracker
-
-# Launch the application
-docker compose up --build
+docs/references/                    # Deep platform-specific best-practice references
 ```
 
-The application will be available at:
-- Frontend: http://localhost:3000
-- Backend API: http://localhost:8080
+---
 
-## Manual Setup
+## GitHub Actions — Workflow Matrix
 
-### Backend
+Five workflows divide responsibility by **trigger zone**. Each owns one slice of the repo and stays out of the others' way — a PR triggers exactly the workflows that matter for what it changed.
 
-```bash
-cd bugtracker-backend
+| Workflow | Triggered on changes to | Purpose | Bot filter |
+|---|---|---|---|
+| `ci.yml` | application code, `Dockerfile`, `docker-compose`, `.github/actions/**` | Run all tests (unit + API + E2E + perf), publish JUnit checks, deploy reports to GitHub Pages | — (not AI) |
+| `gha-review.yml` | `.github/workflows/*.yml`, `.github/actions/**/action.yml` | AI review of GHA workflow files against project best practices; comments severity-ranked findings on PR | yes |
+| `jenkinsfile-review.yml` | `Jenkinsfile` | AI review of the Jenkins pipeline against project best practices | yes |
+| `claude-code-review.yml` | everything else (app code), except: `Jenkinsfile`, all workflow YAML, docs, markdown | General AI code review of application changes | yes |
+| `claude.yml` | `@claude` mentions in issues / PR comments | Responds to direct mentions in conversation | n/a (mention is the filter) |
 
-# Install dependencies
-go mod download
+### Trigger logic
 
-# Run the application
-go run cmd/bugtracker/main.go
+The five workflows are deliberately mutually exclusive on most file changes:
+
+- PR changing **application code** → `ci.yml` (tests) + `claude-code-review.yml` (AI review)
+- PR changing **`.github/workflows/*` or `.github/actions/*`** → `gha-review.yml` only — no double review, no wasted tests
+- PR changing **`Jenkinsfile`** → `jenkinsfile-review.yml` only
+- PR changing **docs / README only** → no workflow runs at all — no AI quota spent on prose
+
+`ci.yml` *does* re-run on changes to the composite action `publish-test-results` because that action is used inside it. It does **not** re-run on changes to its own YAML — validate workflow edits via `workflow_dispatch` (manual run from the Actions tab) to avoid burning 20 minutes of tests on a comment change.
+
+### Specialized + general reviewer pattern
+
+`claude-code-review.yml` is the **general** reviewer; the others are **specialized** by domain (GHA, Jenkins). The general one's `paths-ignore` excludes every area the specialized ones cover, so a PR with workflow changes gets exactly one expert review, not two overlapping ones. This is a common architecture for repos where different code areas need different checklists.
+
+### `ci.yml` — job dependency graph
+
+The CI pipeline has six jobs. Unit tests gate the three integration suites; Pages publication runs only after all integration suites succeed on `main`.
+
+```mermaid
+flowchart LR
+    UB[unit-backend]
+    UF[unit-frontend]
+    AT[api-tests]
+    ET[e2e-tests]
+    PT[perf-tests]
+    PP[publish-pages<br/>main branch only]
+
+    UB --> AT
+    UB --> ET
+    UB --> PT
+    UF --> AT
+    UF --> ET
+    UF --> PT
+    AT --> PP
+    ET --> PP
+    PT --> PP
 ```
 
-The backend API will be available at http://localhost:8080
+Each integration job spins up its own `docker compose` stack — separate state, no shared fixtures between API / E2E / perf. A failure in one integration suite does not block the others from running; only `publish-pages` requires all green.
 
-### Frontend
+---
 
-```bash
-cd bugtracker-frontend
+## Jenkins Pipeline
 
-# Install dependencies
-npm install
-
-# Run the development server
-npm run dev
-```
-
-The frontend will be available at http://localhost:3000
-
-## Running Tests
-
-The project includes several types of tests:
-
-### Backend Unit Tests
-```bash
-cd bugtracker-backend
-go test ./... -v
-```
-
-### Frontend Unit Tests
-```bash
-cd bugtracker-frontend
-npm test
-```
-
-### API Tests
-```bash
-cd tests-api
-npm install
-npm run test:local
-```
-
-### E2E Tests
-```bash
-cd tests-e2e
-npm install
-npx playwright test
-```
-
-### Performance Tests
-First, install K6:
-```bash
-# MacOS
-brew install k6
-
-# Windows
-winget install k6
-
-# Linux
-For Linux installation instructions, please refer to the [official K6 installation guide](https://k6.io/docs/getting-started/installation#linux)
-```
-
-Then run the tests:
-```bash
-cd tests-perf
-k6 run script.js
-```
-
-## Project Structure
-
-- `bugtracker-backend/` - Go backend application
-- `bugtracker-frontend/` - Next.js frontend application
-- `tests-api/` - API tests using Playwright
-- `tests-e2e/` - End-to-end tests using Playwright
-- `tests-perf/` - Performance tests using K6
-- `jenkins/` - Contains Jenkins pipeline configurations
-
-## Jenkins CI/CD
-
-The project includes Jenkins pipelines located in the `jenkins/` folder for continuous integration and deployment.
-
-To start Jenkins locally using Docker Compose:
+The `jenkins/` directory contains a `Dockerfile` and `docker-compose.yml` for running Jenkins locally:
 
 ```bash
 cd jenkins
-docker-compose up --build
+docker compose up --build
+# Jenkins available at http://localhost:9000
 ```
 
-Jenkins will then be available at [http://localhost:9000](http://localhost:9000).
+The root `Jenkinsfile` mirrors `ci.yml` stage-for-stage. See [docs/references/jenkins-best-practices.md](./docs/references/jenkins-best-practices.md) for the deep dive on declarative syntax, shared libraries, agent strategies, credential bindings, parallel sharding, and `post`-block design.
 
-## Contributing
+---
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
+## Cross-stack Parity
+
+Both stacks run the same QA pipeline. The intent is to show how the same workflow maps onto two ecosystems and where the platforms force different trade-offs (caching primitives, secret handling, parallelism, reporting hooks).
+
+| Stage | Jenkins | GitHub Actions |
+|---|---|---|
+| Checkout | `checkout scm` | `actions/checkout` |
+| Tool setup | `tool` directive / `withMaven` | `actions/setup-*` with built-in `cache:` |
+| Dependency cache | Pipeline Utility `cache` step | `setup-*/cache:` option |
+| Parallel test shards | `parallel { }` block | matrix `strategy` with `fail-fast: false` |
+| Test results | `junit` step | `dorny/test-reporter` |
+| HTML report | `publishHTML` plugin | artifact upload + `deploy-pages` |
+| Failure artifacts | `archiveArtifacts onlyIfSuccessful: false` | `upload-artifact` with `if: ${{ !cancelled() }}` |
+
+Where the platforms force a real divergence (OIDC support, container execution model, agent allocation), it is documented inline in the pipeline files.
+
+---
+
+## Operations
+
+### GitHub Pages
+
+CI test reports are published to GitHub Pages on every successful push to `main` by `ci.yml`'s `publish-pages` job. The landing page (`./` of the Pages site) links to per-suite reports:
+
+- `/backend/` — Go coverage HTML
+- `/frontend/` — Jest coverage
+- `/api/` — Playwright API report
+- `/e2e/` — Playwright browser report
+- `/perf/` — k6 HTML summary
+
+Pages publication is **serialized** via a workflow-spanning concurrency group named `pages-deploy`. Both `ci.yml` and `gha-review.yml` (which also deploys to Pages) share this group, so deploys never race or overwrite each other:
+
+```mermaid
+sequenceDiagram
+    participant M as Push to main
+    participant CI as ci.yml<br/>publish-pages
+    participant PR as PR sync
+    participant GR as gha-review.yml<br/>deploy
+    participant P as GitHub Pages
+
+    Note over CI,GR: Shared concurrency group: pages-deploy<br/>(cancel-in-progress: false)
+
+    M->>CI: trigger
+    activate CI
+    PR->>GR: trigger
+    GR-->>GR: queued, waits for CI to finish
+    CI->>P: deploy CI reports
+    deactivate CI
+    activate GR
+    GR->>P: deploy review HTML
+    deactivate GR
+```
+
+Without the shared group, both workflows would race — `actions/deploy-pages` serializes server-side, but the order would be non-deterministic and the last writer's content wins.
+
+The landing page itself is rendered from `.github/pages/index.template.html` via `envsubst` with an explicit variable whitelist (`SHORT_SHA`, `TIMESTAMP`, `RUN_NUMBER`), so no other environment variable — including `GITHUB_TOKEN` — can leak into the rendered HTML.
+
+### Validating workflow edits
+
+`ci.yml` does not auto-trigger on changes to its own YAML. To validate edits manually:
+
+1. Push the change to your branch
+2. Go to **Actions → CI — Build, Test & Report → Run workflow**
+3. Select your branch, click **Run workflow**
+
+`workflow_dispatch` is configured on all CI workflows for exactly this purpose.
+
+### Running tests locally
+
+See [APP.md](./APP.md) for application setup and local test commands.
+
+---
+
+## Key Patterns Applied
+
+Practices enforced across both Jenkins and GHA in this repo:
+
+- **SHA-pin every third-party action.** Pinning by tag (`@v4`) is mutable; only full-SHA pinning is supply-chain-safe.
+- **Default-deny workflow permissions.** Workflow-level `permissions: { contents: read }`; per-job grants add only what that job needs.
+- **`if: ${{ !cancelled() }}` over `always()` for reporting and cleanup.** `always()` runs even on user-initiated cancellation; rarely what you want.
+- **Shared concurrency group for GitHub Pages.** Two workflows publishing to the same Pages site must share a `pages-deploy` group to prevent race conditions and last-writer-wins surprises.
+- **Specialized + general AI reviewers, dispatched by `paths` / `paths-ignore`.** Avoid double review on PRs that touch multiple areas.
+- **Bot-author filter on AI reviewers** (`if: ${{ !contains(github.actor, '[bot]') }}`). Dependabot / Renovate bumps don't need AI review — saves quota.
+- **`--body-file` for safe `gh pr comment`.** Body content passed inline (`--body "..."`) is shell-interpolated and vulnerable to backticks, `$(...)`, and quotes in the text; `--body-file` bypasses the shell parser entirely.
+- **Single-quoted heredoc (`<<'EOF'`) inside `withCredentials` and shell prompts.** Stops `$`, backticks, and `${{ }}` from being interpolated before the command runs.
+- **JUnit XML from k6 via `handleSummary`.** No xk6 extensions needed — emit JUnit inline so the perf job posts a native test check on both GHA and Jenkins.
+- **`envsubst` with explicit variable whitelist.** Templates rendered into Pages or CI artifacts use `envsubst 'VAR1 VAR2' < template` to prevent accidental secret interpolation.
+
+---
+
+## Further Reading
+
+- [docs/references/github-actions-best-practices.md](./docs/references/github-actions-best-practices.md) — GHA-specific deep practices (composite actions, OIDC, matrix strategies, caching)
+- [docs/references/jenkins-best-practices.md](./docs/references/jenkins-best-practices.md) — Jenkins shared libraries, agent strategies, CPS, credentials
+- [APP.md](./APP.md) — bug-tracker application setup, dev commands, structure
+- [CLAUDE.md](./CLAUDE.md) — project intent and working agreement for Claude Code sessions
+
+---
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details 
+MIT — see [LICENSE](./LICENSE).
