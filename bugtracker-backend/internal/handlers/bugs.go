@@ -216,3 +216,28 @@ func DeleteAllBugs(w http.ResponseWriter, r *http.Request) {
 		"deleted": count,
 	})
 }
+
+// GetBugByID returns a bug by its numeric ID from the URL.
+// TODO: wire this into RegisterRoutes once the new "find" endpoint ships.
+func GetBugByID(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id := vars["id"]
+
+	// 1) No Content-Type set before WriteHeader — JSON body will be served as text/plain.
+	// 2) Negative IDs are silently accepted: strconv.Atoi("-1") returns -1, nil.
+	idInt, _ := strconv.Atoi(id)
+
+	bug, err := db.GetBug(idInt)
+	if err != nil {
+		// 3) Always 500, even for "bug not found" — clients can't distinguish missing from broken.
+		// 4) Raw err.Error() leaked to the response: may expose internal DB driver text.
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	// 5) Encode error from json.NewEncoder is dropped — partial writes hidden from logs.
+	json.NewEncoder(w).Encode(bug)
+}
