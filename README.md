@@ -60,10 +60,6 @@ The five workflows are deliberately mutually exclusive on most file changes:
 
 `ci.yml` *does* re-run on changes to the composite action `publish-test-results` because that action is used inside it. It does **not** re-run on changes to its own YAML — validate workflow edits via `workflow_dispatch` (manual run from the Actions tab) to avoid burning 20 minutes of tests on a comment change.
 
-### Specialized + general reviewer pattern
-
-`claude-code-review.yml` is the **general** reviewer; the others are **specialized** by domain (GHA, Jenkins). The general one's `paths-ignore` excludes every area the specialized ones cover, so a PR with workflow changes gets exactly one expert review, not two overlapping ones. This is a common architecture for repos where different code areas need different checklists.
-
 ### `ci.yml` — job dependency graph
 
 The CI pipeline has six jobs. Unit tests gate the three integration suites; Pages publication runs only after all integration suites succeed on `main`.
@@ -89,6 +85,42 @@ flowchart LR
 ```
 
 Each integration job spins up its own `docker compose` stack — separate state, no shared fixtures between API / E2E / perf. A failure in one integration suite does not block the others from running; only `publish-pages` requires all green.
+
+---
+
+## Claude Code on Pull Requests
+
+Four Claude-powered workflows run on PRs in parallel, each specialized to a domain. This is **not a single AI reviewer** — it's a multi-reviewer architecture where the right specialist is dispatched by the files in the diff, a general reviewer fills the gap for everything else, and an `@claude` mention provides on-demand interaction without burning a full automatic review.
+
+```mermaid
+flowchart TD
+    PR[Pull Request opened or synchronized]
+    BotCheck{Author is a bot?}
+    Dispatch{Files changed in PR}
+
+    PR --> BotCheck
+    BotCheck -->|yes| Skip[Skipped — no AI quota burned<br/>on dependabot / renovate bumps]
+    BotCheck -->|no| Dispatch
+
+    Dispatch -->|".github/workflows/*<br/>.github/actions/**/action.yml"| GHA["gha-review.yml<br/>GHA best-practices reviewer"]
+    Dispatch -->|"Jenkinsfile"| JF["jenkinsfile-review.yml<br/>Jenkins best-practices reviewer"]
+    Dispatch -->|"app code, Dockerfile, compose<br/>(excludes docs / markdown)"| General["claude-code-review.yml<br/>general code reviewer"]
+    Dispatch -->|"docs/** or **/*.md only"| Nothing[No review]
+
+    GHA --> Comment[Severity-ranked findings<br/>posted as PR comment]
+    JF --> Comment
+    General --> Comment
+```
+
+Separately, `claude.yml` responds to **`@claude` mentions** in any PR or issue comment — interactive, on-demand, not automatic. Ask "look at job X, why is it flaky?" in a comment and Claude reads the conversation context and answers inline.
+
+### Properties of this design
+
+- **Dispatched by `paths` / `paths-ignore`.** Each reviewer triggers only on the files it understands. A PR touching both `.github/workflows/ci.yml` and `bugtracker-backend/main.go` gets a GHA-best-practices review *and* a general code review — but never two general reviews on the same change.
+- **Specialized reviewers carry domain checklists in their prompts.** `gha-review.yml` and `jenkinsfile-review.yml` ship full project-specific rule sets (default-deny permissions, SHA pinning, `post`-block design, CPS gotchas, agent strategies, etc.) baked into the action's `prompt:` input. The general reviewer doesn't try to be an expert in every YAML dialect.
+- **Bot-author filter on every automatic reviewer** (`if: ${{ !contains(github.actor, '[bot]') }}`). Dependabot / Renovate PRs skip AI review entirely — saves quota on mechanical bumps. `ci.yml` (tests) still runs on bot PRs as normal.
+- **Docs / markdown PRs trigger nothing.** A pure README fix doesn't burn AI quota or runner minutes — `paths-ignore: ['docs/**', '**/*.md']` is set on every reviewer.
+- **One PR comment per reviewer.** Each posts its findings as a separate severity-ranked comment (Critical / High / Medium / Low). Multiple reviewers on the same PR produce multiple comments, not one mixed-domain summary.
 
 ---
 
@@ -187,8 +219,6 @@ Practices enforced across both Jenkins and GHA in this repo:
 - **Default-deny workflow permissions.** Workflow-level `permissions: { contents: read }`; per-job grants add only what that job needs.
 - **`if: ${{ !cancelled() }}` over `always()` for reporting and cleanup.** `always()` runs even on user-initiated cancellation; rarely what you want.
 - **Shared concurrency group for GitHub Pages.** Two workflows publishing to the same Pages site must share a `pages-deploy` group to prevent race conditions and last-writer-wins surprises.
-- **Specialized + general AI reviewers, dispatched by `paths` / `paths-ignore`.** Avoid double review on PRs that touch multiple areas.
-- **Bot-author filter on AI reviewers** (`if: ${{ !contains(github.actor, '[bot]') }}`). Dependabot / Renovate bumps don't need AI review — saves quota.
 - **`--body-file` for safe `gh pr comment`.** Body content passed inline (`--body "..."`) is shell-interpolated and vulnerable to backticks, `$(...)`, and quotes in the text; `--body-file` bypasses the shell parser entirely.
 - **Single-quoted heredoc (`<<'EOF'`) inside `withCredentials` and shell prompts.** Stops `$`, backticks, and `${{ }}` from being interpolated before the command runs.
 - **JUnit XML from k6 via `handleSummary`.** No xk6 extensions needed — emit JUnit inline so the perf job posts a native test check on both GHA and Jenkins.
