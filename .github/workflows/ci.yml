@@ -1,4 +1,4 @@
-name: CI
+name: CI — Build, Test & Report
 
 on:
   push:
@@ -28,17 +28,19 @@ jobs:
       contents: read
       checks: write  # required by dorny/test-reporter inside publish-test-results
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         with:
           fetch-depth: 1
 
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff  # v5.6.0
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff  # v5.6.0
         with:
           go-version: '1.21'
           cache-dependency-path: bugtracker-backend/go.sum
 
       - name: Install go-junit-report
-        run: go install github.com/jstemmer/go-junit-report/v2@latest
+        run: go install github.com/jstemmer/go-junit-report/v2@v2.1.0
 
       - name: Run backend tests
         working-directory: bugtracker-backend
@@ -49,12 +51,13 @@ jobs:
           mkdir -p reports
           mv coverage.html reports/
 
-      - uses: ./.github/actions/publish-test-results
+      - name: Publish backend test results
         if: ${{ !cancelled() }}
+        uses: ./.github/actions/publish-test-results
         with:
           junit-path: bugtracker-backend/test-results.xml
           html-report-dir: bugtracker-backend/reports
-          artifact-name: backend-coverage-report
+          artifact-name: backend-test-report
           reporter-name: Backend Unit Tests
 
   unit-frontend:
@@ -64,11 +67,13 @@ jobs:
       contents: read
       checks: write
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         with:
           fetch-depth: 1
 
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
         with:
           node-version: '20'
           cache: npm
@@ -79,19 +84,19 @@ jobs:
         run: |
           npm ci
           npm test
-          rm -rf reports
           mkdir -p reports
-          mv coverage reports/
+          mv coverage reports/coverage
 
-      - uses: ./.github/actions/publish-test-results
+      - name: Publish frontend test results
         if: ${{ !cancelled() }}
+        uses: ./.github/actions/publish-test-results
         with:
           junit-path: bugtracker-frontend/test-results.xml
           html-report-dir: bugtracker-frontend/reports/coverage
-          artifact-name: frontend-coverage-report
+          artifact-name: frontend-test-report
           reporter-name: Frontend Unit Tests
 
-  integration:
+  api-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [unit-backend, unit-frontend]
@@ -101,20 +106,20 @@ jobs:
     env:
       FORCE_COLOR: '1'
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         with:
           fetch-depth: 1
 
-      # ── Launch Application ────────────────────────────────────────────────
       - name: Start application
         run: docker compose up --build --wait --wait-timeout 60
 
-      # ── API Tests ─────────────────────────────────────────────────────────
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
         with:
           node-version: '20'
           cache: npm
-          cache-dependency-path: '**/package-lock.json'
+          cache-dependency-path: tests-api/package-lock.json
 
       - name: Install API test dependencies
         working-directory: tests-api
@@ -126,21 +131,67 @@ jobs:
         working-directory: tests-api
         run: npx playwright test
 
-      - uses: ./.github/actions/publish-test-results
+      - name: Publish API test results
         if: ${{ !cancelled() }}
+        uses: ./.github/actions/publish-test-results
         with:
           junit-path: tests-api/test-results/results.xml
           html-report-dir: tests-api/playwright-report
-          artifact-name: api-tests-report
+          artifact-name: api-test-report
           reporter-name: API Tests
 
-      # ── E2E Tests ─────────────────────────────────────────────────────────
+      - name: Collect container logs on failure
+        if: ${{ failure() }}
+        run: |
+          mkdir -p logs
+          docker compose logs --no-color > logs/compose.log
+          docker compose ps > logs/compose-ps.log
+
+      - name: Upload container logs
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: api-tests-container-logs
+          path: logs/
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Tear down application
+        if: ${{ always() }}
+        run: docker compose down --volumes --remove-orphans --rmi local && docker image prune -f
+
+  e2e-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [unit-backend, unit-frontend]
+    permissions:
+      contents: read
+      checks: write
+    env:
+      FORCE_COLOR: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          fetch-depth: 1
+
+      - name: Start application
+        run: docker compose up --build --wait --wait-timeout 60
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: tests-e2e/package-lock.json
+
       - name: Install E2E dependencies
         working-directory: tests-e2e
         run: npm ci
 
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
+      - name: Cache Playwright browsers
         id: pw-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
         with:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('tests-e2e/package-lock.json') }}
@@ -159,15 +210,53 @@ jobs:
         working-directory: tests-e2e
         run: npx playwright test
 
-      - uses: ./.github/actions/publish-test-results
+      - name: Publish E2E test results
         if: ${{ !cancelled() }}
+        uses: ./.github/actions/publish-test-results
         with:
           junit-path: tests-e2e/test-results/results.xml
           html-report-dir: tests-e2e/playwright-report
-          artifact-name: e2e-tests-report
+          artifact-name: e2e-test-report
           reporter-name: E2E Tests
 
-      # ── Performance Tests ─────────────────────────────────────────────────
+      - name: Collect container logs on failure
+        if: ${{ failure() }}
+        run: |
+          mkdir -p logs
+          docker compose logs --no-color > logs/compose.log
+          docker compose ps > logs/compose-ps.log
+
+      - name: Upload container logs
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: e2e-tests-container-logs
+          path: logs/
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Tear down application
+        if: ${{ always() }}
+        run: docker compose down --volumes --remove-orphans --rmi local && docker image prune -f
+
+  perf-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [unit-backend, unit-frontend]
+    permissions:
+      contents: read
+      checks: write
+    env:
+      FORCE_COLOR: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          fetch-depth: 1
+
+      - name: Start application
+        run: docker compose up --build --wait --wait-timeout 60
+
       - name: Install k6 v2.0.0
         run: |
           curl -L https://github.com/grafana/k6/releases/download/v2.0.0/k6-v2.0.0-linux-amd64.tar.gz \
@@ -176,18 +265,35 @@ jobs:
 
       - name: Run performance tests
         working-directory: tests-perf
-        run: k6 run script.js
+        run: |
+          mkdir -p reports test-results
+          k6 run script.js
 
-      - name: Upload performance report
+      - name: Publish performance test results
         if: ${{ !cancelled() }}
+        uses: ./.github/actions/publish-test-results
+        with:
+          junit-path: tests-perf/test-results/results.xml
+          html-report-dir: tests-perf/reports
+          artifact-name: perf-test-report
+          reporter-name: Performance Tests
+
+      - name: Collect container logs on failure
+        if: ${{ failure() }}
+        run: |
+          mkdir -p logs
+          docker compose logs --no-color > logs/compose.log
+          docker compose ps > logs/compose-ps.log
+
+      - name: Upload container logs
+        if: ${{ failure() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
-          name: performance-report
-          path: tests-perf/perf-results.html
-          retention-days: 14
+          name: perf-tests-container-logs
+          path: logs/
+          retention-days: 7
           if-no-files-found: warn
 
-      # ── Teardown ──────────────────────────────────────────────────────────
       - name: Tear down application
         if: ${{ always() }}
         run: docker compose down --volumes --remove-orphans --rmi local && docker image prune -f
