@@ -27,7 +27,8 @@ The user is a **Senior QA / SDET** with deep test-framework experience but treat
 
 ### Language
 
-- **Chat:** Russian — explanations, commentary, every prose response.
+- **Chat (local Claude Code session):** Russian — explanations, commentary, every prose response.
+- **GitHub context (PR comments, issue comments, @claude mentions):** English only — responses are public and visible to the whole team.
 - **Code, comments, committed files:** English — `Jenkinsfile`, workflow YAML, Groovy classes in `src/`/`vars/`, shell scripts, Markdown in `docs/`. Files go to remote repos — no Russian in source.
 - **Technical terms** (agent, runner, matrix, post-block, OIDC, composite action, CPS, sandbox, stash, etc.) stay in English everywhere.
 
@@ -80,6 +81,7 @@ When writing or reviewing pipeline code, **proactively** flag non-obvious behavi
 - `junit allowEmptyResults: true` hides test-runner crashes — runner died before writing XML, no tests reported, build is "green"
 - Script Approval — first use of certain APIs in sandboxed pipelines requires admin approval; failures look like permission errors
 - `def x = ...` outside `script {}` in declarative is restricted — confusing errors
+- `agent none` + `cleanWs()` / `sh` in `post {}` without `node {}` = `AbortException: step requires a node context`. When switching from `agent any` to `agent none`, immediately audit ALL `post` blocks for steps that need a node (cleanWs, sh, script) and wrap them in `node('') {}`. Use `node('') {}` (empty string label = any executor), NOT bare `node {}` — declarative parser requires an explicit label parameter or it fails at compile time with "Missing required parameter: label"
 
 **Cross-platform:**
 - Cache key without lockfile hash → stale cache → mysterious "dependency missing" failures
@@ -204,6 +206,7 @@ A short list of rules that apply universally — apply them without consulting t
 - Pin shared libraries: `@Library('qa-shared@v1.4.2') _` (never floating master)
 - Secrets only via `withCredentials([...])` with single-quoted shell — never via `environment { }` interpolation
 - Reporting (`junit`, `archiveArtifacts onlyIfSuccessful: false`) lives in `post { always { } }`
+- When using `agent none`: wrap any `post {}` step that requires a node context (`cleanWs`, `sh`, `script`) in `node {}` — there is no implicit executor at pipeline level
 
 ### Test framework conventions
 

@@ -1,0 +1,137 @@
+name: GitHub Actions Best Practices Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/*.yml'
+      - '.github/actions/**/action.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    if: ${{ !contains(github.actor, '[bot]') }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          fetch-depth: 0
+
+      - name: Review GitHub Actions changes
+        uses: anthropics/claude-code-action@51ea8ea73a139f2a74ff649e3092c25a904aed7e  # v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: |
+            --allowedTools "Read,Glob,Grep,Bash,Write"
+            --model claude-sonnet-4-6
+            --effort medium
+            --max-turns 30
+          prompt: |
+            Review the GitHub Actions YAML files changed in this pull request against best practices.
+
+            Step 0 — Find changed files.
+            If this is a PR (base ref is "${{ github.base_ref }}", non-empty means PR), run:
+              git diff --name-only origin/${{ github.base_ref }}...HEAD -- .github/workflows/ .github/actions/
+            If base ref is empty (workflow_dispatch), list all files instead:
+              find .github/workflows .github/actions -name '*.yml' -o -name '*.yaml' 2>/dev/null || true
+            Read each discovered file with the Read tool before starting the review.
+
+            Step 1 — Review each file. Read `docs/references/github-actions-best-practices.md` for the full project-specific rules.
+
+            For workflow files (.github/workflows/):
+            1. Permissions — a workflow-level default-deny block must exist; per-job grants add only what that job needs
+            2. Action SHA pinning — every `uses:` must be pinned by full commit SHA, not by tag or floating branch
+            3. timeout-minutes — every job must declare a timeout (the default is 6 hours — a hung step burns runner minutes silently)
+            4. concurrency — PR-triggered workflows must have a concurrency group; cancel-in-progress should be true for PRs, false for main-branch pushes
+            5. Reporting and cleanup steps — `if: always()` runs even on cancellation; use the `!cancelled()` condition (inside an `if:` expression) for reporting/cleanup
+            6. Trigger filters — `on: push` without branch or path filters fires on every branch and tag push
+            7. fail-fast in test matrices — should be false so all shards complete and the full failure picture is visible
+            8. Cache key hygiene — dependency cache keys must include the lockfile hash; prefer setup-*/cache: option over bare actions/cache
+            9. secrets: inherit in reusable workflows — leaks all caller secrets; pass only what's needed explicitly
+            10. pull_request_target + checkout of PR head — dangerous: runs with secrets but executes untrusted fork code
+
+            For composite actions (.github/actions/):
+            11. using: composite — must be set (flag if missing or set to an unexpected value)
+            12. shell: — must be explicit on every `run:` step; composite actions do not inherit a default shell
+            13. secrets: block — composite actions cannot declare secrets; flag if present
+
+            Step 2 — Write findings as JSON to `_site/review-data.json`.
+            Get the current UTC timestamp first: date -u +"%Y-%m-%dT%H:%M:%SZ"
+            Use this exact schema:
+            {
+              "pr": ${{ github.event.pull_request.number || 0 }},
+              "repo": "${{ github.repository }}",
+              "generated_at": "<UTC timestamp from above>",
+              "files_reviewed": ["<list of file paths reviewed>"],
+              "findings": [
+                {
+                  "file": "<relative path to the file>",
+                  "severity": "critical|high|medium|low",
+                  "title": "Short finding title (max 80 chars)",
+                  "description": "What the problem is and where in the file",
+                  "fix": "Concrete fix instruction"
+                }
+              ]
+            }
+            If no issues found, set "findings" to an empty array [].
+
+            Step 3 — Merge template with data by running:
+            mkdir -p _site && python3 <<'PY'
+            with open('_site/review-data.json') as f: data = f.read()
+            with open('docs/review-template.html') as t: tmpl = t.read()
+            with open('_site/index.html', 'w') as o: o.write(tmpl.replace('REVIEW_DATA_PLACEHOLDER', data))
+            PY
+
+            Step 4 — Post findings as a PR comment using the gh CLI (skip on workflow_dispatch where there is no PR).
+            Write the comment body to a file first and pass it via --body-file so backticks, $, and quotes in the review text
+            are not interpreted by the shell:
+              if [ "${{ github.event_name }}" = "pull_request" ]; then
+                cat > /tmp/pr-comment.md <<'COMMENT'
+                YOUR_REVIEW_MARKDOWN_HERE
+                COMMENT
+                gh pr comment ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --body-file /tmp/pr-comment.md
+              fi
+
+            The PR comment must contain:
+            - A bullet list of files reviewed
+            - A one-line summary: "X issues found (Y critical, Z high)"
+            - A severity-ranked list of findings (Critical / High / Medium / Low) grouped by file, with a concrete fix for each
+            - A link to the full HTML report: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+            - If no issues found: "No issues found — all reviewed files follow GitHub Actions best practices"
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9  # v5.0.0
+        with:
+          path: _site
+
+  deploy:
+    needs: review
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: pages-deploy
+      cancel-in-progress: false  # never interrupt an in-flight Pages deploy (shared with ci.yml publish-pages)
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128  # v5

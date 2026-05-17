@@ -1,0 +1,43 @@
+name: Publish Test Results
+description: Upload HTML report artifact and post JUnit results as a GitHub Check
+
+inputs:
+  junit-path:
+    description: Glob path to JUnit XML file(s)
+    required: true
+  html-report-dir:
+    description: Directory containing the HTML report (leave empty to skip upload)
+    required: false
+    default: ''
+  artifact-name:
+    description: Name for the uploaded HTML report artifact
+    required: true
+  reporter-name:
+    description: Display name shown in the GitHub Checks tab
+    required: true
+  retention-days:
+    description: Artifact retention in days
+    required: false
+    default: '14'
+
+runs:
+  using: composite
+  steps:
+    - name: Upload HTML report
+      if: ${{ inputs.html-report-dir != '' }}
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ inputs.html-report-dir }}
+        retention-days: ${{ inputs.retention-days }}
+        if-no-files-found: warn
+
+    - name: Publish test check
+      if: ${{ !cancelled() }}
+      uses: dorny/test-reporter@a43b3a5f7366b97d083190328d2c652e1a8b6aa2  # v3.0.0
+      with:
+        name: ${{ inputs.reporter-name }}
+        path: ${{ inputs.junit-path }}
+        reporter: java-junit
+        fail-on-error: 'true'
+        fail-on-empty: 'true'

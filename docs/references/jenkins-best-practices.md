@@ -651,4 +651,4 @@ pipeline {
 }
 ```
 
-> NOTE: the `cleanup` block needs an explicit `node` because the pipeline runs `agent none` — there's no implicit executor for cleanup unless you allocate one.
+> NOTE: the `cleanup` block needs an explicit `node` because the pipeline runs `agent none` — there's no implicit executor for cleanup unless you allocate one. Use `node('') {}` (empty string = any available executor), NOT bare `node {}` — the declarative parser requires an explicit label parameter and fails at compile time with "Missing required parameter: label" otherwise.

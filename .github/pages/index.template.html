@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bug Tracker — Test Reports</title>
+  <style>
+    body { font-family: -apple-system, system-ui, sans-serif; max-width: 720px; margin: 3rem auto; padding: 0 1.25rem; line-height: 1.55; color: #1a1a1a; background: #fafafa; }
+    h1 { font-size: 1.6rem; margin: 0 0 0.4rem; }
+    .meta { color: #666; font-size: 0.9rem; margin-bottom: 2rem; }
+    .meta code { background: #eee; padding: 0.1rem 0.35rem; border-radius: 3px; }
+    ul { list-style: none; padding: 0; margin: 0; }
+    li { margin: 0.6rem 0; padding: 1rem 1.1rem; border: 1px solid #e1e4e8; border-radius: 6px; background: #fff; }
+    li a { color: #0366d6; text-decoration: none; font-weight: 600; font-size: 1.05rem; }
+    li a:hover { text-decoration: underline; }
+    .desc { color: #586069; font-size: 0.88rem; margin: 0.2rem 0 0; }
+  </style>
+</head>
+<body>
+  <h1>Bug Tracker — Test Reports</h1>
+  <p class="meta">Latest <code>main</code> · ${SHORT_SHA} · ${TIMESTAMP} · run #${RUN_NUMBER}</p>
+  <ul>
+    <li>
+      <a href="./backend/">Backend Unit Tests — Go coverage</a>
+      <p class="desc">go test + coverage profile rendered as HTML</p>
+    </li>
+    <li>
+      <a href="./frontend/">Frontend Unit Tests — Jest coverage</a>
+      <p class="desc">jest --coverage with html reporter</p>
+    </li>
+    <li>
+      <a href="./api/">API Tests — Playwright report</a>
+      <p class="desc">HTTP-level integration tests, no browser</p>
+    </li>
+    <li>
+      <a href="./e2e/">E2E Tests — Playwright report</a>
+      <p class="desc">Browser tests against the full docker-compose stack</p>
+    </li>
+    <li>
+      <a href="./perf/">Performance Tests — k6 report</a>
+      <p class="desc">Load test + threshold pass/fail summary</p>
+    </li>
+  </ul>
+</body>
+</html>

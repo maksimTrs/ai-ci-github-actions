@@ -1,12 +1,21 @@
 pipeline {
     agent none
 
+    triggers {
+        pollSCM('H/2 * * * *')  // check for new commits every ~2 minutes
+    }
+
     options {
-        timeout(time: 45, unit: 'MINUTES')
+        // abort the entire pipeline if it runs longer than 10 minutes
+        timeout(time: 15, unit: 'MINUTES')
+        // prefix every log line with the wall-clock time
         timestamps()
+        // render ANSI color codes from test runners (Playwright, k6, Go) in Jenkins logs
         ansiColor('xterm')
+        // cancel any in-progress build for this branch when a new one starts
         disableConcurrentBuilds(abortPrevious: true)
-        buildDiscarder(logRotator(numToKeepStr: '20', artifactNumToKeepStr: '10'))
+        // keep only the last 5 builds and their artifacts to save disk space
+        buildDiscarder(logRotator(numToKeepStr: '5', artifactNumToKeepStr: '5'))
     }
 
     stages {
@@ -115,6 +124,9 @@ pipeline {
                     args '--network=host -v $HOME/.npm:/root/.npm'
                 }
             }
+            environment {
+                FORCE_COLOR = '1'  // force Playwright list reporter to emit ANSI codes — rendered by AnsiColor plugin
+            }
             steps {
                 dir('tests-api') {
                     sh 'npm ci'
@@ -136,6 +148,81 @@ pipeline {
                 }
             }
         }
+
+        stage('E2E Tests') {
+            agent {
+                docker {
+                    image 'mcr.microsoft.com/playwright:v1.50.0-jammy'
+                    reuseNode true
+                    // -u 0: root required for Chromium sandbox and browser deps
+                    // --network=host: reaches compose services on localhost ports (same as API Tests)
+                    args '-u 0 --network=host -v $HOME/.npm:/root/.npm'
+                }
+            }
+            environment {
+                CI          = 'true'  // activates headless mode in playwright.config.ts
+                FORCE_COLOR = '1'     // force Playwright list reporter to emit ANSI codes — rendered by AnsiColor plugin
+            }
+            steps {
+                dir('tests-e2e') {
+                    sh 'npm ci'
+                    sh 'npx playwright test'
+                }
+            }
+            post {
+                always {
+                    junit testResults: 'tests-e2e/test-results/results.xml',
+                          allowEmptyResults: false
+                    publishHTML target: [
+                        allowMissing:          true,
+                        alwaysLinkToLastBuild: true,
+                        keepAll:               true,
+                        reportDir:             'tests-e2e/playwright-report',
+                        reportFiles:           'index.html',
+                        reportName:            'Playwright E2E Test Report'
+                    ]
+                }
+            }
+        }
+
+        stage('Performance Tests') {
+            options {
+                // k6 script runs 30s + container startup overhead; 5 min fits within pipeline-level 10 min ceiling
+                timeout(time: 5, unit: 'MINUTES')
+            }
+            agent {
+                docker {
+                    image 'grafana/k6:2.0.0'
+                    reuseNode true
+                    // --network=host: k6 needs to reach compose services on localhost ports
+                    // --entrypoint="": Jenkins agent requires a shell; k6 image sets its own entrypoint
+                    args '--network=host --entrypoint=""'
+                }
+            }
+            steps {
+                dir('tests-perf') {
+                    // catchError: k6 exits 99 when thresholds are breached — treat as UNSTABLE, not FAILED
+                    // threshold breach means SLO violated, not pipeline broken; downstream stages (cleanup) still run
+                    catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE') {
+                        sh 'k6 run script.js'
+                    }
+                }
+            }
+            post {
+                always {
+                    // allowMissing: if k6 crashed before handleSummary ran, HTML won't exist — don't mask the real error
+                    // keepAll: retain one report per build for cross-run comparison
+                    publishHTML target: [
+                        allowMissing:          true,
+                        alwaysLinkToLastBuild: true,
+                        keepAll:               true,
+                        reportDir:             'tests-perf',
+                        reportFiles:           'perf-results.html',
+                        reportName:            'Performance Test Results'
+                    ]
+                }
+            }
+        }
     }
 
     post {
@@ -152,8 +239,16 @@ pipeline {
                 }
             }
         }
+        failure {
+            echo 'Pipeline FAILED — notify team here (Slack/email)'
+        }
+        regression {
+            echo 'Pipeline REGRESSION — was green, now red'
+        }
         cleanup {
-            cleanWs(deleteDirs: true)
+            node('') {
+                cleanWs()
+            }
         }
     }
 }
