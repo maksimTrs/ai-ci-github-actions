@@ -47,7 +47,6 @@ jobs:
           mv coverage.html reports/
 
       - name: Publish backend test results
-        if: ${{ !cancelled() }}
         uses: ./.github/actions/publish-test-results
         with:
           junit-path: bugtracker-backend/test-results.xml
