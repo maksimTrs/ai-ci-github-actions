@@ -99,7 +99,7 @@ flowchart TD
     Dispatch{Files changed in PR}
 
     PR --> BotCheck
-    BotCheck -->|yes| Skip[Skipped — no AI quota burned<br/>on dependabot / renovate bumps]
+    BotCheck -->|yes| Skip[Skipped — no AI quota<br/> burned on dependabot]
     BotCheck -->|no| Dispatch
 
     Dispatch -->|".github/workflows/*<br/>.github/actions/**/action.yml"| GHA["gha-review.yml<br/>GHA best-practices reviewer"]
