@@ -41,9 +41,56 @@ export default function () {
   sleep(5);
 }
 
+function escapeXml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+// Minimal JUnit XML writer for k6 threshold results.
+// Emits one <testcase> per (metric, threshold) pair; failed thresholds get a <failure>.
+function junitXml(data) {
+  const cases = [];
+  let failures = 0;
+  let total = 0;
+
+  const metrics = data.metrics || {};
+  for (const metricName of Object.keys(metrics)) {
+    const metric = metrics[metricName];
+    if (!metric.thresholds) continue;
+    for (const thrName of Object.keys(metric.thresholds)) {
+      const thr = metric.thresholds[thrName];
+      total++;
+      const caseName = escapeXml(`${metricName}: ${thrName}`);
+      if (thr.ok) {
+        cases.push(`    <testcase name="${caseName}" classname="k6.thresholds"/>`);
+      } else {
+        failures++;
+        cases.push(
+          `    <testcase name="${caseName}" classname="k6.thresholds">\n` +
+          `      <failure message="threshold breached">${caseName}</failure>\n` +
+          `    </testcase>`
+        );
+      }
+    }
+  }
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite name="k6" tests="${total}" failures="${failures}">
+${cases.join("\n")}
+  </testsuite>
+</testsuites>
+`;
+}
+
 export function handleSummary(data) {
   return {
-    "perf-results.html": htmlReport(data),
+    "reports/perf-results.html": htmlReport(data),
+    "test-results/results.xml": junitXml(data),
     stdout: textSummary(data, { indent: " ", enableColors: true }),
   };
 }
