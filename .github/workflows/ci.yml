@@ -6,11 +6,6 @@ on:
     paths-ignore:
       - 'docs/**'
       - '**/*.md'
-  pull_request:
-    branches: [main]
-    paths-ignore:
-      - 'docs/**'
-      - '**/*.md'
   workflow_dispatch:
 
 permissions:
@@ -132,7 +127,6 @@ jobs:
         run: npx playwright test
 
       - name: Publish API test results
-        if: ${{ !cancelled() }}
         uses: ./.github/actions/publish-test-results
         with:
           junit-path: tests-api/test-results/results.xml
@@ -141,14 +135,12 @@ jobs:
           reporter-name: API Tests
 
       - name: Collect container logs on failure
-        if: ${{ failure() }}
         run: |
           mkdir -p logs
           docker compose logs --no-color > logs/compose.log
           docker compose ps > logs/compose-ps.log
 
       - name: Upload container logs
-        if: ${{ failure() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: api-tests-container-logs
@@ -334,9 +326,6 @@ jobs:
           mkdir -p site/backend site/frontend site/api site/e2e site/perf
 
           cp -r artifacts/backend-test-report/.  site/backend/
-          cp -r artifacts/frontend-test-report/. site/frontend/
-          cp -r artifacts/api-test-report/.      site/api/
-          cp -r artifacts/e2e-test-report/.      site/e2e/
           cp -r artifacts/perf-test-report/.     site/perf/
 
           # Backend (single coverage.html) and perf (single perf-results.html) have no
