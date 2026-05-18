@@ -42,7 +42,16 @@ jobs:
         uses: anthropics/claude-code-action@51ea8ea73a139f2a74ff649e3092c25a904aed7e  # v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          claude_args: '--allowedTools "Bash(gh pr *),Bash(gh api *)"'
+          # TODO: consider --debug-file in claude_args + upload-artifact step with if: failure()
+          #       for silent-fail diagnostics (deferred — add only if silent fails actually start appearing)
+          claude_args: |
+            --allowedTools "Read,Glob,Grep,Bash(gh pr *),Bash(gh api *)"
+            --disallowedTools "Bash(rm *),Bash(sudo *),Bash(git push *),Bash(git commit *),Bash(git add *),Bash(git reset *),Bash(git checkout *),Bash(curl *),Bash(wget *),Bash(npm install *),Bash(pip install *),Bash(apt *),Bash(apt-get *)"
+            --model claude-sonnet-4-6
+            --fallback-model claude-haiku-4-5-20251001
+            --effort medium
+            --max-turns 20
+            --max-budget-usd 3.00
           prompt: |
             Review the changes in this pull request and post a detailed code review comment.
 
@@ -52,6 +61,12 @@ jobs:
             - Performance: unnecessary allocations, N+1 queries, blocking calls
             - Language best practices: idiomatic patterns, naming, interface design
             - Maintainability: function length, single responsibility, clarity
+
+            Investigate beyond the diff before commenting.
+            Use Read to open modified files in full — diff hunks hide surrounding logic, types, and control flow.
+            Use Grep to find callers of changed functions and to check whether new code duplicates existing patterns elsewhere in the repo.
+            Use Glob to map the area you're reviewing when the change touches an unfamiliar layer.
+            Only open files when the diff genuinely lacks context — do not exhaustively map the codebase.
 
             Be specific — reference file paths and line numbers.
             Skip purely stylistic nitpicks unless they affect readability significantly.
