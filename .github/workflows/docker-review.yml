@@ -1,0 +1,156 @@
+name: Docker Best Practices Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '**/Dockerfile'
+      - '**/Dockerfile.*'
+      - '**/docker-compose*.yml'
+      - '**/compose.yml'
+      - '**/compose.yaml'
+      - '**/.dockerignore'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    if: ${{ !contains(github.actor, '[bot]') }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          fetch-depth: 0
+
+      - name: Review Docker changes
+        uses: anthropics/claude-code-action@51ea8ea73a139f2a74ff649e3092c25a904aed7e  # v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # TODO: consider --debug-file in claude_args + upload-artifact step with if: failure()
+          #       for silent-fail diagnostics (deferred — add only if silent fails actually start appearing)
+          claude_args: |
+            --allowedTools "Read,Glob,Grep,Bash,Write"
+            --disallowedTools "Bash(rm *),Bash(sudo *),Bash(git push *),Bash(git commit *),Bash(git add *),Bash(git reset *),Bash(git checkout *),Bash(curl *),Bash(wget *),Bash(npm install *),Bash(pip install *),Bash(apt *),Bash(apt-get *)"
+            --model claude-sonnet-4-6
+            --fallback-model claude-haiku-4-5-20251001
+            --effort medium
+            --max-turns 25
+            --max-budget-usd 3.00
+          prompt: |
+            Review the Docker files changed in this pull request against best practices.
+
+            Step 0 — Find changed files.
+            If this is a PR (base ref is "${{ github.base_ref }}", non-empty means PR), run:
+              git diff --name-only origin/${{ github.base_ref }}...HEAD -- '**/Dockerfile*' '**/docker-compose*.yml' '**/compose.yml' '**/compose.yaml' '**/.dockerignore'
+            If base ref is empty (workflow_dispatch), list all Docker files instead:
+              find . -type f \( -name 'Dockerfile' -o -name 'Dockerfile.*' -o -name 'docker-compose*.yml' -o -name 'compose.yml' -o -name 'compose.yaml' -o -name '.dockerignore' \) -not -path './node_modules/*' -not -path './.git/*' 2>/dev/null || true
+            Read each discovered file with the Read tool before starting the review.
+
+            Step 1 — Review each file. Read `docs/references/docker-best-practices.md` for the full project-specific rules.
+
+            For Dockerfile (and Dockerfile.* variants):
+            1. Base image pinning — `FROM` must pin at least to a minor version (e.g., `node:20.11-slim`), never `:latest`, never bare `node:20`
+            2. Multi-stage builds — production app images should use multi-stage to keep dev deps out of the final image; single-stage acceptable for test runners and dev containers
+            3. COPY order — `COPY package*.json` (or equivalent lockfile) must come before `RUN npm ci` / `pip install`; `COPY . .` of source code must come AFTER dependency install for cache efficiency
+            4. RUN chaining — install commands and their cleanup (`apt-get update`, install, `rm -rf /var/lib/apt/lists/*`) must be chained in a single RUN with `&&`; separate RUN steps make cleanup ineffective (previous layer persists)
+            5. apt flags — `apt-get install` must use `--no-install-recommends` to avoid pulling suggested packages
+            6. Secrets handling — never use `ARG` for tokens, API keys, or credentials; use BuildKit `--mount=type=secret` instead (secrets in ARG are baked into layer history visible via `docker history`)
+            7. USER directive — long-running services that expose ports or handle user input must drop privileges with `USER` before CMD; acceptable to skip for ephemeral test-runner containers using bind mounts (EPERM trade-off)
+            8. HEALTHCHECK — services with exposed ports and a `/health`-style endpoint should declare `HEALTHCHECK` with interval, timeout, start-period, and retries; not required for ephemeral test runners or CLI tools
+            9. ADD vs COPY — `ADD` should only be used when its archive-extraction or remote-URL behavior is actually needed; use `COPY` for local files, `RUN curl` for remote downloads
+            10. Lifecycle scripts — if the project uses husky/lefthook/similar git-hook tools, the Dockerfile should disable them (`ENV HUSKY=0` or `--ignore-scripts`) since there is no `.git` inside the container
+            11. Production omits dev deps — production stages must use `npm ci --omit=dev` (or equivalent for the language); copying full `node_modules` from a builder stage with dev deps is a smell
+
+            For docker-compose*.yml / compose.yml:
+            12. Image pinning — `image:` must be pinned to a specific tag or digest, never `:latest`
+            13. depends_on with healthcheck — when a service depends on another (e.g., app on db), `depends_on` must use `condition: service_healthy` AND the dependency must have a `healthcheck:` block; bare `depends_on:` controls startup order only, not readiness
+            14. init: true — services whose CMD spawns child processes (npm/npx wrappers, shell scripts) should declare `init: true` for proper signal forwarding
+            15. Secrets in compose — inline `environment:` with real credentials is forbidden; use `env_file:` (with gitignored `.env`) or Docker secrets
+            16. Restart policy — long-running services should declare `restart: unless-stopped`; one-shot containers (test runners, migrations) should be `restart: "no"`
+            17. Resource limits — long-running services should declare `deploy.resources.limits.memory` to prevent OOM cascades
+            18. Healthcheck on dependency targets — any service that appears in another service's `depends_on` with `condition: service_healthy` must have a `healthcheck:` block
+
+            For .dockerignore:
+            19. Existence — every Dockerfile's build context directory must contain a `.dockerignore` (check by directory, not by repo root)
+            20. Required exclusions — `.dockerignore` must exclude at minimum: `.git`, `node_modules` (or language equivalent), `.env`, `.env.*` (with `!.env.example` allow), test artifacts (`test-results`, `coverage`, `playwright-report`)
+            21. CI files — `.github`, `Jenkinsfile`, `.gitlab-ci.yml` should be excluded — no reason to ship them in the image
+
+            Step 2 — Write findings as JSON to `_site/review-data.json`.
+            Get the current UTC timestamp first: date -u +"%Y-%m-%dT%H:%M:%SZ"
+            Use this exact schema:
+            {
+              "pr": ${{ github.event.pull_request.number || 0 }},
+              "repo": "${{ github.repository }}",
+              "generated_at": "<UTC timestamp from above>",
+              "files_reviewed": ["<list of file paths reviewed>"],
+              "findings": [
+                {
+                  "file": "<relative path to the file>",
+                  "severity": "critical|high|medium|low",
+                  "title": "Short finding title (max 80 chars)",
+                  "description": "What the problem is and where in the file",
+                  "fix": "Concrete fix instruction"
+                }
+              ]
+            }
+            If no issues found, set "findings" to an empty array [].
+
+            Step 3 — Merge template with data by running:
+            mkdir -p _site && python3 <<'PY'
+            with open('_site/review-data.json') as f: data = f.read()
+            with open('docs/review-template.html') as t: tmpl = t.read()
+            with open('_site/index.html', 'w') as o: o.write(tmpl.replace('REVIEW_DATA_PLACEHOLDER', data))
+            PY
+
+            Step 4 — Post findings as a PR comment using the gh CLI (skip on workflow_dispatch where there is no PR).
+            Write the comment body to a file first and pass it via --body-file so backticks, $, and quotes in the review text
+            are not interpreted by the shell:
+              if [ "${{ github.event_name }}" = "pull_request" ]; then
+                cat > /tmp/pr-comment.md <<'COMMENT'
+                YOUR_REVIEW_MARKDOWN_HERE
+                COMMENT
+                gh pr comment ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --body-file /tmp/pr-comment.md
+              fi
+
+            The PR comment must contain:
+            - A bullet list of files reviewed
+            - A one-line summary: "X issues found (Y critical, Z high)"
+            - A severity-ranked list of findings (Critical / High / Medium / Low) grouped by file, with a concrete fix for each
+            - A link to the full HTML report: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+            - If no issues found: "No issues found — all reviewed Docker files follow best practices"
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9  # v5.0.0
+        with:
+          path: _site
+
+  deploy:
+    needs: review
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: pages-deploy
+      cancel-in-progress: false  # never interrupt an in-flight Pages deploy (shared with ci.yml publish-pages)
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128  # v5

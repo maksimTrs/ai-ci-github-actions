@@ -136,34 +136,36 @@ Installed at `~/.claude/skills/devops-ci-review/`. **Invoke via the `Skill` tool
 
 ### 2. Project-level reference files (deep, platform-specific practices)
 
-Two reference files in `docs/references/` give comprehensive practices structured by the same 6 dimensions, plus QA-specific patterns and full reference skeletons. Use the **Read tool** to load these — they are NOT auto-loaded.
+Three reference files in `docs/references/` give comprehensive practices structured by the same 6 dimensions, plus QA-specific patterns and full reference skeletons. Use the **Read tool** to load these — they are NOT auto-loaded.
 
 | File | Read it BEFORE working on… |
 |---|---|
 | `docs/references/github-actions-best-practices.md` | `.github/workflows/*.yml`, `.github/actions/**/action.yml`, any reusable workflow / composite action / OIDC / matrix / cache decision in GHA |
 | `docs/references/jenkins-best-practices.md` | `Jenkinsfile`, `vars/*.groovy`, `src/**/*.groovy`, `resources/**`, any decision about agents, credentials, shared libraries, parallel sharding, or `post { }` design in Jenkins |
+| `docs/references/docker-best-practices.md` | `**/Dockerfile*`, `**/docker-compose*.yml`, `**/compose.y?ml`, `**/.dockerignore`, any decision about multi-stage builds, base image selection, layer caching, healthchecks, or non-root user vs bind mounts |
 
-> ОБРАТИ ВНИМАНИЕ: when **designing or writing** a pipeline (vs. reviewing), read the corresponding reference file first — it has platform-specific patterns the skill does not cover (Jenkins shared libraries entirely; GHA's QA-specific `dorny/test-reporter`, OIDC trust policies, sharding patterns).
+> ОБРАТИ ВНИМАНИЕ: when **designing or writing** a pipeline or image (vs. reviewing), read the corresponding reference file first — it has platform-specific patterns the skill does not cover (Jenkins shared libraries entirely; GHA's QA-specific `dorny/test-reporter`, OIDC trust policies, sharding patterns; Docker QA-specific patterns like ephemeral test-runner containers and bind-mount permission trade-offs).
 
 ### 3. Skill's own references (Docker + general GHA)
 
-The skill ships its own `references/github-actions.md` and `references/docker.md`. Those are loaded automatically when the skill is invoked. **Don't duplicate** their content into the project files — when adding new content, ask: is this Jenkins-specific (→ project file), QA-specific (→ project file), or generic CI/CD (→ skill)?
+The skill ships its own `references/github-actions.md` and `references/docker.md`. Those are loaded automatically when the skill is invoked. The project-level `docs/references/docker-best-practices.md` intentionally re-organizes the skill's Docker content into the 6-dimension structure used elsewhere in this repo and adds QA-specific patterns (ephemeral test runners, bind-mount trade-offs, artifact extraction) plus full reference skeletons (Node app, Playwright runner, compose stack). It is also referenced from `docker-review.yml`'s review prompt. When adding new content, ask: is this Jenkins-specific (→ project Jenkins ref), Docker-specific to QA pipelines (→ project Docker ref), or generic CI/CD (→ skill)?
 
 ### Triggering rules — what to load when
 
-| Task | Skill | GHA ref | Jenkins ref |
-|---|---|---|---|
-| Review existing `.github/workflows/*.yml` | ✓ | optional | — |
-| Review existing `Jenkinsfile` | ✓ (manual mapping for Jenkins) | — | ✓ |
-| Write new GHA workflow | optional | ✓ | — |
-| Write new `Jenkinsfile` or `vars/*.groovy` | optional | — | ✓ |
-| Modify AI review workflows (`claude-code-review.yml`, `gha-review.yml`, `jenkinsfile-review.yml`, `claude.yml`) | — | ✓ | — |
-| Cross-platform design decision (parity) | optional | ✓ | ✓ |
-| Dockerfile / docker-compose change | ✓ | — | — |
+| Task | Skill | GHA ref | Jenkins ref | Docker ref |
+|---|---|---|---|---|
+| Review existing `.github/workflows/*.yml` | ✓ | optional | — | — |
+| Review existing `Jenkinsfile` | ✓ (manual mapping for Jenkins) | — | ✓ | — |
+| Review existing `Dockerfile*` / `docker-compose*.yml` | ✓ | — | — | ✓ |
+| Write new GHA workflow | optional | ✓ | — | — |
+| Write new `Jenkinsfile` or `vars/*.groovy` | optional | — | ✓ | — |
+| Write new `Dockerfile*` or `docker-compose*.yml` | optional | — | — | ✓ |
+| Modify AI review workflows (`claude-code-review.yml`, `gha-review.yml`, `jenkinsfile-review.yml`, `docker-review.yml`, `claude.yml`) | — | ✓ | — | — |
+| Cross-platform design decision (parity) | optional | ✓ | ✓ | — |
 
 ### Required secrets
 
-`CLAUDE_CODE_OAUTH_TOKEN` must be set in repository **Settings → Secrets → Actions** for all four AI review workflows to function. Without it, `claude-review` jobs will fail at the authentication step. The token is obtained from [claude.ai/settings](https://claude.ai/settings) under "Claude Code".
+`CLAUDE_CODE_OAUTH_TOKEN` must be set in repository **Settings → Secrets → Actions** for all five AI review workflows to function. Without it, `claude-review` jobs will fail at the authentication step. The token is obtained from [claude.ai/settings](https://claude.ai/settings) under "Claude Code".
 
 ## Pipeline Architecture Principles
 

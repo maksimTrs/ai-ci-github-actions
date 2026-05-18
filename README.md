@@ -16,6 +16,7 @@ For application setup, local dev commands, and stack details, see [APP.md](./APP
 │   ├── ci.yml                     #   main CI — tests + reporting + GitHub Pages
 │   ├── gha-review.yml             #   AI review of .github/workflows + .github/actions
 │   ├── jenkinsfile-review.yml     #   AI review of Jenkinsfile changes
+│   ├── docker-review.yml          #   AI review of Dockerfile + docker-compose + .dockerignore
 │   ├── claude-code-review.yml     #   AI review of application code
 │   └── claude.yml                 #   @claude mention responder
 ├── actions/
@@ -39,24 +40,26 @@ docs/references/                    # Deep platform-specific best-practice refer
 
 ## GitHub Actions — Workflow Matrix
 
-Five workflows divide responsibility by **trigger zone**. Each owns one slice of the repo and stays out of the others' way — a PR triggers exactly the workflows that matter for what it changed.
+Six workflows divide responsibility by **trigger zone**. Each owns one slice of the repo and stays out of the others' way — a PR triggers exactly the workflows that matter for what it changed.
 
 | Workflow | Triggered on changes to | Purpose | Bot filter |
 |---|---|---|---|
 | `ci.yml` | application code, `Dockerfile`, `docker-compose`, `.github/actions/**` | Run all tests (unit + API + E2E + perf), publish JUnit checks, deploy reports to GitHub Pages | — (not AI) |
 | `gha-review.yml` | `.github/workflows/*.yml`, `.github/actions/**/action.yml` | AI review of GHA workflow files against project best practices; comments severity-ranked findings on PR | yes |
 | `jenkinsfile-review.yml` | `Jenkinsfile` | AI review of the Jenkins pipeline against project best practices | yes |
-| `claude-code-review.yml` | everything else (app code), except: `Jenkinsfile`, all workflow YAML, docs, markdown | General AI code review of application changes | yes |
+| `docker-review.yml` | `**/Dockerfile*`, `**/docker-compose*.yml`, `**/compose.y?ml`, `**/.dockerignore` | AI review of Docker images and Compose stacks against project best practices | yes |
+| `claude-code-review.yml` | everything else (app code), except: `Jenkinsfile`, all workflow YAML, Docker files, `.dockerignore`, docs, markdown | General AI code review of application changes | yes |
 | `claude.yml` | `@claude` mentions in issues / PR comments | Responds to direct mentions in conversation | n/a (mention is the filter) |
 
 ### Trigger logic
 
-The five workflows are deliberately mutually exclusive on most file changes:
+The six workflows are deliberately mutually exclusive on most file changes:
 
 - PR changing **application code** → `ci.yml` (tests) + `claude-code-review.yml` (AI review)
 - PR changing **`.github/workflows/**`** → `gha-review.yml` only — `ci.yml` excludes all workflow YAML via `paths-ignore`
 - PR changing **`.github/actions/**`** → `gha-review.yml` + `ci.yml` — the composite action (`publish-test-results`) is used inside `ci.yml`, so tests re-run to validate it
 - PR changing **`Jenkinsfile`** → `jenkinsfile-review.yml` only
+- PR changing **`Dockerfile*` / `docker-compose*.yml` / `.dockerignore`** → `docker-review.yml` (best-practice review) + `ci.yml` (image rebuild + tests against the new image)
 - PR changing **docs / README only** → no workflow runs at all — no AI quota spent on prose
 
 `ci.yml` *does* re-run on changes to the composite action `publish-test-results` because that action is used inside it. It does **not** re-run on changes to its own YAML — validate workflow edits via `workflow_dispatch` (manual run from the Actions tab) to avoid burning 20 minutes of tests on a comment change.
@@ -91,7 +94,7 @@ Each integration job spins up its own `docker compose` stack — separate state,
 
 ## Claude Code on Pull Requests
 
-Four Claude-powered workflows run on PRs in parallel, each specialized to a domain. This is **not a single AI reviewer** — it's a multi-reviewer architecture where the right specialist is dispatched by the files in the diff, a general reviewer fills the gap for everything else, and an `@claude` mention provides on-demand interaction without burning a full automatic review.
+Five Claude-powered workflows run on PRs in parallel, each specialized to a domain. This is **not a single AI reviewer** — it's a multi-reviewer architecture where the right specialist is dispatched by the files in the diff, a general reviewer fills the gap for everything else, and an `@claude` mention provides on-demand interaction without burning a full automatic review.
 
 ```mermaid
 flowchart TD
@@ -105,11 +108,13 @@ flowchart TD
 
     Dispatch -->|".github/workflows/*<br/>.github/actions/*"| GHA["gha-review.yml<br/>GHA best-practices reviewer"]
     Dispatch -->|"Jenkinsfile"| JF["jenkinsfile-review.yml<br/>Jenkins best-practices reviewer"]
-    Dispatch -->|"any app code, dockerfiles"| General["claude-code-review.yml<br/>general code reviewer"]
+    Dispatch -->|"Dockerfile* / compose*<br/>.dockerignore"| DK["docker-review.yml<br/>Docker best-practices reviewer"]
+    Dispatch -->|"any app code"| General["claude-code-review.yml<br/>general code reviewer"]
     Dispatch -->|"docs/** or **/*.md only"| Nothing[No review]
 
     GHA --> Comment[Severity-ranked findings<br/>posted as PR comment]
     JF --> Comment
+    DK --> Comment
     General --> Comment
 ```
 
@@ -118,7 +123,7 @@ Separately, `claude.yml` responds to **`@claude` mentions** in any PR or issue c
 ### Properties of this design
 
 - **Dispatched by `paths` / `paths-ignore`.** Each reviewer triggers only on the files it understands. A PR touching both `.github/workflows/ci.yml` and `bugtracker-backend/main.go` gets a GHA-best-practices review *and* a general code review — but never two general reviews on the same change.
-- **Specialized reviewers carry domain checklists in their prompts.** `gha-review.yml` and `jenkinsfile-review.yml` ship full project-specific rule sets (default-deny permissions, SHA pinning, `post`-block design, CPS gotchas, agent strategies, etc.) baked into the action's `prompt:` input. The general reviewer doesn't try to be an expert in every YAML dialect.
+- **Specialized reviewers carry domain checklists in their prompts.** `gha-review.yml`, `jenkinsfile-review.yml`, and `docker-review.yml` ship full project-specific rule sets (default-deny permissions, SHA pinning, `post`-block design, CPS gotchas, agent strategies, multi-stage builds, layer caching, healthchecks, etc.) baked into the action's `prompt:` input. The general reviewer doesn't try to be an expert in every YAML dialect.
 - **Bot-author filter on every automatic reviewer** (`if: ${{ !contains(github.actor, '[bot]') }}`). Dependabot / Renovate PRs skip AI review entirely — saves quota on mechanical bumps. `ci.yml` (tests) still runs on bot PRs as normal.
 - **Docs / markdown PRs trigger nothing.** A pure README fix doesn't burn AI quota or runner minutes — `paths-ignore: ['docs/**', '**/*.md']` is set on every reviewer.
 - **One PR comment per reviewer.** Each posts its findings as a separate severity-ranked comment (Critical / High / Medium / Low). Multiple reviewers on the same PR produce multiple comments, not one mixed-domain summary.
@@ -231,6 +236,7 @@ Practices enforced across both Jenkins and GHA in this repo:
 
 - [docs/references/github-actions-best-practices.md](./docs/references/github-actions-best-practices.md) — GHA-specific deep practices (composite actions, OIDC, matrix strategies, caching)
 - [docs/references/jenkins-best-practices.md](./docs/references/jenkins-best-practices.md) — Jenkins shared libraries, agent strategies, CPS, credentials
+- [docs/references/docker-best-practices.md](./docs/references/docker-best-practices.md) — Docker multi-stage builds, layer caching, base images, USER vs bind-mount trade-offs, Compose healthchecks
 - [APP.md](./APP.md) — bug-tracker application setup, dev commands, structure
 - [CLAUDE.md](./CLAUDE.md) — project intent and working agreement for Claude Code sessions
 

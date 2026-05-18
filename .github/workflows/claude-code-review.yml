@@ -8,6 +8,12 @@ on:
       - 'Jenkinsfile'
       - '.github/workflows/**'
       - '.github/actions/**'
+      - '**/Dockerfile'
+      - '**/Dockerfile.*'
+      - '**/docker-compose*.yml'
+      - '**/compose.yml'
+      - '**/compose.yaml'
+      - '**/.dockerignore'
       # Docs/markdown — not worth burning AI-review quota on prose changes
       - 'docs/**'
       - '**/*.md'
