@@ -106,9 +106,9 @@ flowchart TD
     BotCheck -->|yes| Skip[Skipped — no AI quota<br/> burned on dependabot]
     BotCheck -->|no| Dispatch
 
-    Dispatch -->|".github/workflows/*<br/>.github/actions/*"| GHA["gha-review.yml<br/>GHA best-practices reviewer"]
-    Dispatch -->|"Jenkinsfile"| JF["jenkinsfile-review.yml<br/>Jenkins best-practices reviewer"]
-    Dispatch -->|"Dockerfile* / compose*<br/>.dockerignore"| DK["docker-review.yml<br/>Docker best-practices reviewer"]
+    Dispatch -->|".github/workflows/*<br/>.github/actions/*"| GHA["gha-review.yml<br/>GHA reviewer"]
+    Dispatch -->|"Jenkinsfile"| JF["jenkinsfile-review.yml<br/>Jenkins reviewer"]
+    Dispatch -->|"Dockerfile* / compose*<br/>.dockerignore"| DK["docker-review.yml<br/>Docker reviewer"]
     Dispatch -->|"any app code"| General["claude-code-review.yml<br/>general code reviewer"]
     Dispatch -->|"docs/** or **/*.md only"| Nothing[No review]
 
