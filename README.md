@@ -54,7 +54,8 @@ Five workflows divide responsibility by **trigger zone**. Each owns one slice of
 The five workflows are deliberately mutually exclusive on most file changes:
 
 - PR changing **application code** → `ci.yml` (tests) + `claude-code-review.yml` (AI review)
-- PR changing **`.github/workflows/*` or `.github/actions/*`** → `gha-review.yml` only — no double review, no wasted tests
+- PR changing **`.github/workflows/**`** → `gha-review.yml` only — `ci.yml` excludes all workflow YAML via `paths-ignore`
+- PR changing **`.github/actions/**`** → `gha-review.yml` + `ci.yml` — the composite action (`publish-test-results`) is used inside `ci.yml`, so tests re-run to validate it
 - PR changing **`Jenkinsfile`** → `jenkinsfile-review.yml` only
 - PR changing **docs / README only** → no workflow runs at all — no AI quota spent on prose
 

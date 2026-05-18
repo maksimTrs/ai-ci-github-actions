@@ -490,6 +490,61 @@ publish-allure:
 
 ---
 
+## AI Review Workflows — `claude-code-action` Configuration
+
+When using `anthropics/claude-code-action` for automated PR review (triggered by `pull_request` event, not `@claude` mention), three settings are required or the job exits 0 silently with no comment posted.
+
+### 1. Write permissions — mandatory for automated mode
+
+The action uses `GITHUB_TOKEN` to post the review comment. With only `read`, the API call is rejected silently:
+
+```yaml
+permissions:
+  contents: read
+  pull-requests: write   # required to post PR comments
+  issues: write          # required — PR comments are created via the Issues API endpoint
+  id-token: write        # for OAuth token exchange
+```
+
+### 2. Tool allowlist via `claude_args`
+
+In CI mode, `Bash` is blocked by default. Claude needs it to read the PR diff and post the review:
+
+```yaml
+with:
+  claude_args: '--allowedTools "Bash(gh pr *),Bash(gh api *)"'
+```
+
+`Bash(gh pr *)` covers `gh pr diff`, `gh pr comment`, `gh pr view`. Without this, Claude attempts the calls, hits permission denials, and exits without posting.
+
+### 3. Use `prompt`, not `direct_prompt`
+
+The only valid input for instructions is `prompt`. `direct_prompt` does not exist in the action's input schema and produces a validation error:
+
+```yaml
+with:
+  prompt: |
+    Review the changes in this pull request and post a detailed code review comment.
+    ...
+```
+
+### Silent failure diagnostic
+
+When the job completes in under 60 seconds with no PR comment, inspect the run log for:
+
+```json
+"permission_denials_count": 2
+```
+
+- `> 0` — Claude ran but hit tool blocks → add `claude_args` allowlist
+- `= 0`, no comment — GitHub API rejected the write → check `pull-requests: write`
+
+### Mention mode vs. automated mode — why `claude.yml` works without write permissions
+
+`@claude` mention workflows use the Claude OAuth token to reply to the existing comment thread. Automated `pull_request` workflows must **create** a new comment, which goes through `GITHUB_TOKEN` and requires `pull-requests: write`.
+
+---
+
 ## Reference Workflow Skeleton
 
 A canonical QA workflow shape for this project — use as the starting structure when scaffolding new pipelines:
