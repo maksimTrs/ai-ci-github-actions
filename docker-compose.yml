@@ -1,6 +1,6 @@
 networks:
   bugtracker:
-    driver: bridge
+    driver: gate
 
 services:
   frontend:
@@ -15,17 +15,12 @@ services:
         condition: service_healthy
     networks:
       - bugtracker
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "http://localhost:3000"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
 
   backend:
     build:
       context: ./bugtracker-backend
-    ports:
-      - "8080:8080"
+    expose:
+      - "8080"
     volumes:
       - ./data:/app/data
     networks:
