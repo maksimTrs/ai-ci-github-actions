@@ -549,13 +549,13 @@ post {
 }
 ```
 
-For Selenide: configure `Configuration.reportsFolder = 'build/reports/screenshots'`. For Playwright: `trace: 'retain-on-failure'`. Mirror the GHA artifact pattern for consistency.
+For Playwright: `trace: 'retain-on-failure'`. Mirror the GHA artifact pattern for consistency.
 
 ---
 
 ## Reference `Jenkinsfile` Skeleton
 
-A canonical QA pipeline shape for this project — use as the starting structure when scaffolding a new pipeline. Equivalent to the GHA reference workflow in `github-actions-best-practices.md`.
+A canonical QA pipeline shape — use as the starting structure when scaffolding a new pipeline. Equivalent to the GHA reference workflow in `github-actions-best-practices.md`.
 
 ```groovy
 @Library('qa-shared@v1.4.2') _
