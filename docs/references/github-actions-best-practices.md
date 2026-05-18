@@ -452,7 +452,7 @@ Upload only on failure, scoped per-test:
     if-no-files-found: ignore
 ```
 
-For Playwright: `trace: 'retain-on-failure'`. For Selenide: `Configuration.savePageSource = false` if you don't need HTML dumps; screenshots+videos only on failure.
+For Playwright: `trace: 'retain-on-failure'`.
 
 ### Allure aggregation across shards
 
@@ -547,7 +547,7 @@ When the job completes in under 60 seconds with no PR comment, inspect the run l
 
 ## Reference Workflow Skeleton
 
-A canonical QA workflow shape for this project — use as the starting structure when scaffolding new pipelines:
+A canonical QA workflow shape — use as the starting structure when scaffolding new pipelines:
 
 ```yaml
 name: QA — PR
