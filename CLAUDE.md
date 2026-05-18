@@ -13,14 +13,6 @@ The two pipelines must stay **functionally equivalent** — same stages, same ga
 
 This is a **template / showcase project**, not a throwaway experiment. Every pipeline decision should be defensible at the bar of "would a senior SDET ship this to a real team."
 
-## Current State
-
-The repository is in **initial scaffolding** — a fresh IntelliJ Java 17 module (Zulu JDK 17, see `.idea/misc.xml`) with no source code, no build tool configuration, no pipelines, and no test framework yet.
-
-There are therefore **no documented build/test/lint commands yet** — they will be added when the test framework and build tool (Maven or Gradle, TBD) are introduced. Do not invent commands; check the actual build files when they exist.
-
-When adding the first build configuration, also document the canonical commands here (build, run all tests, run a single test, lint/format).
-
 ## Teaching Style & Communication
 
 The user is a **Senior QA / SDET** with deep test-framework experience but treats Jenkins, GitHub Actions, Groovy Pipeline DSL, and YAML-based workflow syntax as **new tooling to learn from the ground up**. Calibrate explanations to that bar — engineering depth, not dumbed-down, but no assumed familiarity with platform mechanics.
@@ -64,7 +56,7 @@ When writing or reviewing pipeline code, **proactively** flag non-obvious behavi
 - `secrets: inherit` in reusable workflows leaks all caller secrets, not just what the callee needs
 - Omitted `permissions:` defaults to read-write everywhere — silent overprivilege
 - Action pinned by tag (`@v4`) is mutable; only SHA pinning is secure
-- Matrix Cartesian explosion when stacking `os` × `java-version` × `shard`
+- Matrix Cartesian explosion when stacking `os` × `runtime-version` × `shard`
 - `${{ env.X }}` is evaluated at workflow parse time, `$X` inside `run:` at shell runtime — different escaping rules
 - `actions/cache` key missing the lockfile hash → stale cache, intermittent breakage
 - Default `timeout-minutes` is **6 hours** — a hung step burns runner minutes silently
@@ -165,8 +157,13 @@ The skill ships its own `references/github-actions.md` and `references/docker.md
 | Review existing `Jenkinsfile` | ✓ (manual mapping for Jenkins) | — | ✓ |
 | Write new GHA workflow | optional | ✓ | — |
 | Write new `Jenkinsfile` or `vars/*.groovy` | optional | — | ✓ |
+| Modify AI review workflows (`claude-code-review.yml`, `gha-review.yml`, `jenkinsfile-review.yml`, `claude.yml`) | — | ✓ | — |
 | Cross-platform design decision (parity) | optional | ✓ | ✓ |
 | Dockerfile / docker-compose change | ✓ | — | — |
+
+### Required secrets
+
+`CLAUDE_CODE_OAUTH_TOKEN` must be set in repository **Settings → Secrets → Actions** for all four AI review workflows to function. Without it, `claude-review` jobs will fail at the authentication step. The token is obtained from [claude.ai/settings](https://claude.ai/settings) under "Claude Code".
 
 ## Pipeline Architecture Principles
 
@@ -179,7 +176,7 @@ Every QA stage that exists in one platform must exist in the other, with equival
 | Stage | Jenkins | GitHub Actions |
 |---|---|---|
 | Checkout | `checkout scm` | `actions/checkout@<sha>` |
-| Tool setup | `tool` directive / `withMaven` | `actions/setup-java@<sha>` + `cache: maven` |
+| Tool setup | `tool` directive / `sh 'go install'` / direct install in `sh` | `actions/setup-go@<sha>` / `actions/setup-node@<sha>` with built-in `cache:` |
 | Dependency cache | `cache` step (Pipeline Utility Steps) or shared workspace | `setup-*` `cache:` option |
 | Parallel test shards | `parallel` block | matrix `strategy` with `fail-fast: false` |
 | Test results | `junit` step | `dorny/test-reporter` or equivalent (pinned by SHA) |
@@ -209,27 +206,15 @@ A short list of rules that apply universally — apply them without consulting t
 - Reporting (`junit`, `archiveArtifacts onlyIfSuccessful: false`) lives in `post { always { } }`
 - When using `agent none`: wrap any `post {}` step that requires a node context (`cleanWs`, `sh`, `script`) in `node {}` — there is no implicit executor at pipeline level
 
-### Test framework conventions
-
-When the test framework is added, follow the global instructions in `~/.claude/CLAUDE.md` (transport / domain / test layering, dual-method approach, fixture scoping). The CI/CD pipelines must surface:
-
-- **JUnit XML** from the test runner (both platforms consume it natively)
-- **HTML report** (Allure / ExtentReports / Playwright HTML / Spark — TBD with the framework choice) — published as a build artifact and linked from the build summary
-- **Screenshots / videos / trace files** on failure only, uploaded under a per-test directory structure
-- **Structured logs** (JSON or plain text with deterministic format) so log aggregators can parse them
-
-The pipeline must NEVER hide a test failure. `junit` / test-reporter steps run on failure (`!cancelled()` semantics), and the build status reflects the test verdict, not just the runner exit code.
-
 ## When to Ask vs. Decide
 
 Per global instructions, present **2-3 options with trade-offs** for any architectural decision in this repo — pipeline shape, agent strategy, caching layer, reporting tool, matrix design. The user picks. Do not default to the "minimal" option for a reference framework; show the scalable alternative explicitly.
 
 Examples of decisions that warrant 2-3 options:
-- Build tool: Maven vs. Gradle (and within Gradle: Groovy vs. Kotlin DSL)
-- Test framework: JUnit 5 + REST Assured vs. JUnit 5 + Selenide vs. TestNG + ...
-- Reporting: Allure vs. ExtentReports vs. Spark vs. Surefire HTML
 - Jenkins agent strategy: static labels vs. Kubernetes plugin vs. EC2 cloud
 - GHA runner strategy: `ubuntu-latest` vs. self-hosted vs. larger runners
+- Reporting: Playwright HTML vs. Allure vs. custom Pages dashboard
+- Sharding strategy: static matrix index/total vs. auto-balanced
 
 Examples that do **not** need a question (just decide and proceed):
 - Pinning third-party actions by SHA (per skill rules — always do this)
@@ -248,7 +233,7 @@ Examples that do **not** need a question (just decide and proceed):
 - [ ] **Edge cases proactively flagged:** surfaced gotchas relevant to the code at hand (CPS, secret interpolation, `always` vs `!cancelled`, fork PR safety, cache key staleness, agent labels, etc.)
 - [ ] **Naming explained:** when proposing new pipelines / jobs / stages / library files / actions, explained the naming via `> ЗАМЕТКА:`
 - [ ] **Stayed focused:** one topic deep; asked before expanding to adjacent topics
-- [ ] **2-3 options for architectural decisions:** per global CLAUDE.md, presented trade-offs (build tool, test framework, agent strategy, etc.) — not a single default
+- [ ] **2-3 options for architectural decisions:** per global CLAUDE.md, presented trade-offs (agent strategy, runner type, reporting tool, sharding approach, etc.) — not a single default
 - [ ] **No execution attempted:** reasoned about correctness instead of running pipelines/tooling
 - [ ] **Sources verified:** for non-trivial Jenkins / GHA claims, confirmed via `context7` / web before stating
 - [ ] **Reference files consulted:** read `docs/references/<platform>-best-practices.md` if the change touches that platform; invoked `devops-ci-review` skill for review/audit tasks
