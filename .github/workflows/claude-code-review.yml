@@ -2,10 +2,12 @@ name: Claude Code Review
 
 on:
   pull_request:
-    types: [opened, synchronize, ready_for_review, reopened]
+    branches: [main]
+    types: [opened, synchronize, reopened]
     paths-ignore:
       # Areas already covered by specialized reviewers — avoid double review
       - 'Jenkinsfile'
+      - 'jenkins/**'  # Jenkins infra (Dockerfile, compose, scripts) — separate stack, not application code
       - '.github/workflows/**'
       - '.github/actions/**'
       - '**/Dockerfile'

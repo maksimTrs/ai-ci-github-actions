@@ -2,10 +2,15 @@ name: GitHub Actions Best Practices Review
 
 on:
   pull_request:
+    branches: [main]
     types: [opened, synchronize, reopened]
     paths:
+      # GHA filter patterns do not support brace expansion ({yml,yaml}) —
+      # list the two extensions explicitly so both conventions are covered.
       - '.github/workflows/*.yml'
+      - '.github/workflows/*.yaml'
       - '.github/actions/**/action.yml'
+      - '.github/actions/**/action.yaml'
   workflow_dispatch:
 
 permissions:
