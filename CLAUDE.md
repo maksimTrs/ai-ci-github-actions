@@ -165,7 +165,7 @@ The skill ships its own `references/github-actions.md` and `references/docker.md
 
 ### Required secrets
 
-`CLAUDE_CODE_OAUTH_TOKEN` must be set in repository **Settings → Secrets → Actions** for all five AI review workflows to function. Without it, `claude-review` jobs will fail at the authentication step. The token is obtained from [claude.ai/settings](https://claude.ai/settings) under "Claude Code".
+`CLAUDE_CODE_OAUTH_TOKEN` must be set in repository **Settings → Secrets → Actions** for all five Claude-powered workflows to function — four automated review workflows (`claude-code-review.yml`, `gha-review.yml`, `jenkinsfile-review.yml`, `docker-review.yml`) plus the `@claude` mention helper (`claude.yml`). Without it, the Claude action will fail at the authentication step. The token is obtained from [claude.ai/settings](https://claude.ai/settings) under "Claude Code".
 
 ## Pipeline Architecture Principles
 

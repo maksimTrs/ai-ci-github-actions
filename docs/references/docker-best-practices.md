@@ -493,7 +493,7 @@ Test runners (e.g., Playwright, Cypress, integration test images) have different
 - **Tooling-heavy** — need npm, npx, shell access, full glibc for browser dependencies
 
 ```dockerfile
-FROM mcr.microsoft.com/playwright:v1.45.0-noble
+FROM mcr.microsoft.com/playwright:v1.50.0-jammy
 WORKDIR /tests
 COPY package*.json ./
 RUN npm ci
@@ -506,7 +506,7 @@ CMD ["npx", "playwright", "test"]
 **Why single-stage:** the test runner needs the same toolchain at runtime as at build time. Multi-stage adds complexity without size benefit.
 
 **What still applies:**
-- Pin the base image (`v1.45.0-noble`, not `latest`)
+- Pin the base image (`v1.50.0-jammy`, not `latest`)
 - `.dockerignore` is still required (don't ship the host's `node_modules` into the build context)
 - Lifecycle scripts off (`ENV HUSKY=0`)
 - Disable browser auto-download if using a base image that already has them (`ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`)
@@ -658,7 +658,7 @@ CMD ["node", "dist/index.js"]
 ### Playwright test runner — single-stage, root-OK, bind-mount-friendly
 
 ```dockerfile
-FROM mcr.microsoft.com/playwright:v1.45.0-noble
+FROM mcr.microsoft.com/playwright:v1.50.0-jammy
 ENV HUSKY=0 \
     CI=true
 WORKDIR /tests

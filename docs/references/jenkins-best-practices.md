@@ -46,6 +46,20 @@ pipeline {
 | `buildDiscarder(logRotator(...))` | Without it, build history grows indefinitely → master disk pressure. |
 | `skipDefaultCheckout()` | Use only with explicit `checkout scm` in stages where checkout is needed. |
 
+### `triggers { }` — webhooks vs polling
+
+Production Jenkins is typically driven by SCM webhooks (push events fire the pipeline immediately). When webhooks are not viable — local Jenkins behind NAT, developer-workstation instances, environments where GitHub can't reach the controller — fall back to polling:
+
+```groovy
+triggers {
+  pollSCM('H/2 * * * *')   // hash-distributed every ~2 minutes
+}
+```
+
+The `H` prefix distributes the actual poll moment across the period **per job** — without `H`, every job hooked to `0 */2 * * *` polls at exactly the top of the period, hammering the SCM server. `H` is Jenkins-specific cron syntax: it deterministically hashes the job name into a slot within the range, so the same job always polls at the same offset but different jobs spread out.
+
+> ОБРАТИ ВНИМАНИЕ: polling burns SCM-API quota and adds latency (up to one poll interval) before a build starts. Use `pollSCM` only when webhooks are unavailable; webhook-driven builds (`triggers { githubPush() }` or the GitHub Branch Source plugin) are faster and lighter.
+
 ### Stage-level timeouts for long stages
 
 Pipeline-level timeout is a hard ceiling. Use stage-level timeouts for finer control on flaky stages.
@@ -222,6 +236,8 @@ Use folder-scoped credentials when a credential should only be visible to specif
 
 ### `vars/foo.groovy` skeleton
 
+> ОБРАТИ ВНИМАНИЕ: avoid `(1..n).collectEntries { ... }` / `.each { ... }` inside pipelines — Groovy's CPS transformation may serialize closures across `node {}` boundaries and trigger `NotSerializableException`. Prefer plain `for` loops with a Map accumulator, and capture the loop counter into a local `def` so the closure binds to the captured value, not the mutating loop variable.
+
 ```groovy
 // vars/runQaSuite.groovy
 def call(Map config) {
@@ -230,24 +246,25 @@ def call(Map config) {
   def reportTo  = config.reportTo  ?: 'allure'
 
   stage('Run QA Suite') {
-    parallel(
-      (1..shards).collectEntries { shard ->
-        ["shard-${shard}": {
-          node('linux && jdk17') {
-            checkout scm
-            sh "./gradlew test -Dshard.index=${shard} -Dshard.total=${shards} -Penv=${env}"
-            stash(name: "junit-${shard}", includes: 'build/test-results/**/*.xml')
-          }
-        }]
+    def stages = [:]
+    for (int shard = 1; shard <= shards; shard++) {
+      def s = shard  // capture into local — closure must not close over mutating loop var
+      stages["shard-${s}"] = {
+        node('linux && jdk17') {
+          checkout scm
+          sh "./gradlew test -Dshard.index=${s} -Dshard.total=${shards} -Penv=${env}"
+          stash(name: "junit-${s}", includes: 'build/test-results/**/*.xml')
+        }
       }
-    )
+    }
+    parallel stages
   }
 }
 ```
 
 ### Test the library — JenkinsPipelineUnit
 
-Don't ship shared library code without tests. JenkinsPipelineUnit (`/jenkinsci/jenkinspipelineunit`, benchmark score 91.1) provides Groovy DSL mocking for `sh`, `node`, `stage`, etc.
+Don't ship shared library code without tests. [`jenkinsci/JenkinsPipelineUnit`](https://github.com/jenkinsci/JenkinsPipelineUnit) is the standard Groovy DSL test harness — it stubs `sh`, `node`, `stage`, `parallel`, and most Jenkins steps so library code can be exercised without a live Jenkins instance.
 
 ```groovy
 // src/test/groovy/RunQaSuiteSpec.groovy
@@ -326,6 +343,68 @@ pipeline {
 ```
 
 Don't waste a heavy `browsers` agent for a build stage that doesn't need it.
+
+### Docker agents — DooD pattern for compose-based pipelines
+
+When a stage needs to orchestrate `docker compose` (start an app stack, run tests against it, tear it down), the agent has to control the **host** Docker daemon — not run a daemon inside the build container. The DooD (Docker outside of Docker) pattern mounts the host's Docker socket into the agent:
+
+```groovy
+stage('Launch Application') {
+  agent {
+    docker {
+      image 'docker:27.5.1'
+      reuseNode true
+      args '-v /var/run/docker.sock:/var/run/docker.sock -u 0'
+    }
+  }
+  steps {
+    sh 'docker compose up --build --wait --wait-timeout 60'
+  }
+}
+```
+
+Key elements:
+- `-v /var/run/docker.sock:/var/run/docker.sock` — DooD mount; the agent's `docker` CLI talks to the host daemon, so compose-built containers are siblings of the agent, not children
+- `-u 0` — root inside the agent container is required to access the socket file (owned by `root:docker` on the host; non-root user has no group membership inside an arbitrary base image)
+- `reuseNode true` — share workspace with the outer Jenkins node; without it, the Docker agent gets a fresh empty workspace and `checkout scm` would have to run again
+
+> ОБРАТИ ВНИМАНИЕ: DooD gives compose-built containers full access to the host filesystem and to every other container on the host. Treat the workload as if it were running directly on the host — there is no isolation between the agent and host Docker resources. **Never use DooD on shared Jenkins controllers where untrusted PRs run** — a malicious PR can mount `/`, exfiltrate credentials, or destroy other containers.
+
+> ЗАМЕТКА: the alternative is **DinD (Docker in Docker)** — `docker:27-dind` as a sidecar — which gives true isolation but is heavier (separate daemon, no shared image cache with the host, more setup). DooD is the right default for single-tenant CI; DinD for multi-tenant or untrusted code execution.
+
+### Inline `agent { docker { ... } }` per stage
+
+When the pipeline needs different toolchains per stage and Kubernetes is overkill, inline Docker agents are the simplest path — each stage runs in its own pinned image without polluting the host:
+
+```groovy
+pipeline {
+  agent none
+  stages {
+    stage('Backend') {
+      agent {
+        docker {
+          image 'snakee/golang-junit:1.21'
+          reuseNode true
+          args '-u root'
+        }
+      }
+      steps { sh 'go test ./...' }
+    }
+    stage('Frontend') {
+      agent {
+        docker {
+          image 'node:20-alpine'
+          reuseNode true
+          args '-v $HOME/.npm:/root/.npm'   // mount host npm cache across builds
+        }
+      }
+      steps { sh 'npm ci && npm test' }
+    }
+  }
+}
+```
+
+> ЛУЧШАЯ ПРАКТИКА: `reuseNode true` plus host-volume mounts (`$HOME/.npm`, `$HOME/.gradle/caches`, `$HOME/.m2/repository`) recover what Kubernetes pod templates give for free — dependency-cache persistence across builds without external storage. Always pin the image tag (`node:20-alpine`, not `node:alpine`) for reproducibility — `alpine` and `latest` drift silently.
 
 ### Workspace cleanup — `cleanWs()` in `post { cleanup { } }`
 
@@ -477,18 +556,23 @@ Allure aggregates trends across builds. Set `keepAll: true` for HTML or use Allu
 
 ```groovy
 stage('Tests') {
-  parallel(
-    (1..4).collectEntries { shard ->
-      ["shard-${shard}": {
-        node('linux && jdk17') {
-          checkout scm
-          unstash 'build'
-          sh "./gradlew test -Dshard.index=${shard} -Dshard.total=4"
-          stash(name: "junit-${shard}", includes: 'build/test-results/**/*.xml')
+  steps {
+    script {
+      def stages = [:]
+      for (int shard = 1; shard <= 4; shard++) {
+        def s = shard  // capture for closure (CPS-safe)
+        stages["shard-${s}"] = {
+          node('linux && jdk17') {
+            checkout scm
+            unstash 'build'
+            sh "./gradlew test -Dshard.index=${s} -Dshard.total=4"
+            stash(name: "junit-${s}", includes: 'build/test-results/**/*.xml')
+          }
         }
-      }]
+      }
+      parallel stages
     }
-  )
+  }
 }
 ```
 
@@ -530,7 +614,11 @@ After parallel sharding, gather all JUnit XML on a single node before publishing
 ```groovy
 stage('Aggregate') {
   steps {
-    (1..4).each { shard -> unstash "junit-${shard}" }
+    script {
+      for (int shard = 1; shard <= 4; shard++) {
+        unstash "junit-${shard}"
+      }
+    }
   }
 }
 ```
@@ -590,27 +678,28 @@ pipeline {
       steps {
         script {
           def shards = params.SHARDS.toInteger()
-          parallel(
-            (1..shards).collectEntries { shard ->
-              ["shard-${shard}": {
-                node('linux && jdk17') {
-                  checkout scm
-                  unstash 'build'
-                  withCredentials([string(credentialsId: 'qa-api-token', variable: 'API_TOKEN')]) {
-                    sh """
-                      mvn -B -ntp test \
-                        -Dshard.index=${shard} \
-                        -Dshard.total=${shards} \
-                        -Denv=${params.TEST_ENV}
-                    """
-                  }
-                  stash(name: "junit-${shard}",
-                        includes: 'target/surefire-reports/**, target/allure-results/**',
-                        allowEmpty: true)
+          def stages = [:]
+          for (int shard = 1; shard <= shards; shard++) {
+            def s = shard  // capture for closure — required for CPS-safe parallel
+            stages["shard-${s}"] = {
+              node('linux && jdk17') {
+                checkout scm
+                unstash 'build'
+                withCredentials([string(credentialsId: 'qa-api-token', variable: 'API_TOKEN')]) {
+                  sh """
+                    mvn -B -ntp test \
+                      -Dshard.index=${s} \
+                      -Dshard.total=${shards} \
+                      -Denv=${params.TEST_ENV}
+                  """
                 }
-              }]
+                stash(name: "junit-${s}",
+                      includes: 'target/surefire-reports/**, target/allure-results/**',
+                      allowEmpty: true)
+              }
             }
-          )
+          }
+          parallel stages
         }
       }
     }
@@ -620,7 +709,9 @@ pipeline {
       steps {
         script {
           def shards = params.SHARDS.toInteger()
-          (1..shards).each { unstash "junit-${it}" }
+          for (int i = 1; i <= shards; i++) {
+            unstash "junit-${i}"
+          }
         }
       }
       post {

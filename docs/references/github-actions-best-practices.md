@@ -300,6 +300,8 @@ runs:
 
 ### Reusable workflow skeleton
 
+> NOTE: GHA expressions have only 8 built-in functions (`contains`, `startsWith`, `endsWith`, `format`, `join`, `toJSON`, `fromJSON`, `hashFiles`) plus status checks. There is **no `range()` function** — dynamic matrices must be built in a prior job that emits a JSON array via `outputs:`, then consumed via `fromJSON` in the matrix strategy.
+
 ```yaml
 # .github/workflows/_qa-suite.yml
 name: QA Suite (reusable)
@@ -320,12 +322,33 @@ on:
         value: ${{ jobs.publish.outputs.url }}
 
 jobs:
+  # Build the shard list dynamically — GHA has no range() in expressions.
+  generate-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      shards: ${{ steps.gen.outputs.shards }}
+    steps:
+      - id: gen
+        run: |
+          shards=$(seq -s, 1 ${{ inputs.shards }} | awk '{print "["$0"]"}')
+          echo "shards=$shards" >> "$GITHUB_OUTPUT"
+
   test:
+    needs: generate-matrix
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ fromJson(format('[{0}]', join(range(1, inputs.shards + 1), ','))) }}
+        shard: ${{ fromJSON(needs.generate-matrix.outputs.shards) }}
     # ...
+```
+
+For fixed shard counts, prefer a static array — simpler and one fewer job:
+
+```yaml
+strategy:
+  fail-fast: false
+  matrix:
+    shard: [1, 2, 3, 4]
 ```
 
 ---
@@ -539,9 +562,13 @@ When the job completes in under 60 seconds with no PR comment, inspect the run l
 - `> 0` — Claude ran but hit tool blocks → add `claude_args` allowlist
 - `= 0`, no comment — GitHub API rejected the write → check `pull-requests: write`
 
-### Mention mode vs. automated mode — why `claude.yml` works without write permissions
+### Mention mode vs. automated mode — different triggers, different write paths
 
-`@claude` mention workflows use the Claude OAuth token to reply to the existing comment thread. Automated `pull_request` workflows must **create** a new comment, which goes through `GITHUB_TOKEN` and requires `pull-requests: write`.
+**Mention mode** workflows (typically triggered by `issue_comment`, `pull_request_review_comment`, `pull_request_review`, `issues`) reply to the existing comment thread using the Claude OAuth token passed as `claude_code_oauth_token:`. The OAuth token carries its own GitHub write capability, so the job runs fine with `pull-requests: read` / `issues: read` — no `GITHUB_TOKEN` write needed.
+
+**Automated review mode** workflows (triggered by `pull_request`) must **create** a new comment on the PR via the `gh` CLI. Comment creation goes through `GITHUB_TOKEN`, which requires `pull-requests: write` AND `issues: write` (PR comments use the Issues API endpoint internally).
+
+If an automated review job exits 0 with no PR comment, check the `permissions:` block first — missing `pull-requests: write` / `issues: write` is the most common cause of silent failure.
 
 ---
 
