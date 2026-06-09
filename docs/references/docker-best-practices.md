@@ -328,7 +328,7 @@ COPY --link package*.json ./
 COPY --link src ./src
 ```
 
-`--link` decouples the layer from the previous one — if an earlier layer changes, this layer is NOT rebuilt. Faster rebuilds, especially for COPY-heavy multi-stage images. Available since BuildKit 1.4.
+`--link` decouples the layer from the previous one — if an earlier layer changes, this layer is NOT rebuilt. Faster rebuilds, especially for COPY-heavy multi-stage images. Available since Dockerfile syntax 1.4 (`# syntax=docker/dockerfile:1.4` or newer); requires BuildKit.
 
 ### Size audit — local tools
 

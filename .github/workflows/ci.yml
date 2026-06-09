@@ -277,8 +277,10 @@ jobs:
 
       - name: Install k6 v2.0.0
         run: |
-          curl -L https://github.com/grafana/k6/releases/download/v2.0.0/k6-v2.0.0-linux-amd64.tar.gz \
-            | tar xvz --strip-components 1
+          curl -fsSL -o k6.tar.gz \
+            https://github.com/grafana/k6/releases/download/v2.0.0/k6-v2.0.0-linux-amd64.tar.gz
+          echo "2ae87d976f6cdba17185bdd980d8819a3a98e9092c6f0638cd58272ecefc8b90  k6.tar.gz" | sha256sum -c -
+          tar xzf k6.tar.gz --strip-components 1
           sudo mv k6 /usr/local/bin/k6
 
       - name: Run performance tests

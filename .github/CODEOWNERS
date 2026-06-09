@@ -1,0 +1,9 @@
+# CI/CD trust-boundary files — changes here alter pipeline permissions,
+# AI-review tool allowlists, secrets handling, and deploy behavior.
+# Auto-requests owner review on matching PRs; becomes blocking only when
+# "Require review from Code Owners" is enabled in branch protection / rulesets.
+# Note: the last matching pattern wins, owners must have write access.
+
+/.github/    @maksimTrs
+/Jenkinsfile @maksimTrs
+/jenkins/    @maksimTrs

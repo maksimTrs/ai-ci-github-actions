@@ -109,34 +109,37 @@ Jenkins has no built-in dependency cache action — caching is workspace-shaped 
 
 If the agent is long-lived (static label or long-running pod), `~/.m2/repository` and `~/.gradle/caches` persist across builds naturally. Just don't run `mvn clean install -U` (that forces a redownload of releases).
 
-### Pattern B — `cache` step from Pipeline Utility Steps plugin
+### Pattern B — `cache` step from the Job Cacher plugin
 
-Pipeline Utility Steps provides a workspace-scoped cache:
+The Job Cacher plugin (jenkinsci org) provides a workspace-scoped cache step — the closest Jenkins equivalent to GHA's `actions/cache`. Cache freshness is driven by `cacheValidityDecidingFile` (a lockfile-style glob), playing the role GHA's `hashFiles()` plays in the cache key:
 
 ```groovy
 stage('Build') {
   steps {
-    cache(path: "${env.HOME}/.m2/repository",
-          key: "${env.JOB_NAME}-m2-${hashFiles('**/pom.xml')}",
-          restoreKeys: ["${env.JOB_NAME}-m2-"]) {
+    cache(maxCacheSize: 250, caches: [
+      arbitraryFileCache(path: "${env.HOME}/.m2/repository",
+                         cacheValidityDecidingFile: '**/pom.xml')
+    ]) {
       sh 'mvn -B -DskipTests verify'
     }
   }
 }
 ```
 
-> NOTE: Plugin support for `cache` step API surface varies by version. Check `Pipeline Utility Steps` ≥ 2.16 for `restoreKeys` support.
+> NOTE: an alternative is the Pipeline Cache plugin (`j3t/jenkins-pipeline-cache-plugin`), which mirrors GHA semantics directly (`key:` / `restoreKeys:` / `hashFiles()`) but requires an S3-compatible storage backend and lives in a personal repo. Job Cacher is the jenkinsci-org option — default to it.
 
 ### Pattern C — external cache (S3 / shared volume)
 
 For ephemeral Kubernetes agents, neither A nor B work — agents are destroyed after the build. Cache to S3 via `withAWS` + `s3Upload`/`s3Download`, or mount a shared persistent volume into the agent template:
 
-```yaml
-# In pod template
-volumes:
-  - persistentVolumeClaim:
-      claimName: maven-cache
-      mountPath: /home/jenkins/.m2/repository
+```groovy
+// Kubernetes plugin DSL — pod-level volume, mounted into every container of the pod
+podTemplate(volumes: [
+  persistentVolumeClaim(claimName: 'maven-cache',
+                        mountPath: '/home/jenkins/.m2/repository')
+]) {
+  // node / container blocks here
+}
 ```
 
 For QA pipelines on Kubernetes, **Pattern C is usually right** — ephemeral agents give isolation, the cache PVC gives speed. Document the choice in `Jenkinsfile`.

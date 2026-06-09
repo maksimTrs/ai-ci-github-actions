@@ -1,0 +1,14 @@
+# Keeps SHA-pinned actions current: Dependabot bumps the commit SHA and the
+# trailing version comment together, so pinning stays both secure and fresh.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # One PR per week for all action bumps instead of one PR per action
+      github-actions:
+        patterns:
+          - '*'

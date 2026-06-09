@@ -53,7 +53,7 @@ jobs:
           # TODO: consider --debug-file in claude_args + upload-artifact step with if: failure()
           #       for silent-fail diagnostics (deferred — add only if silent fails actually start appearing)
           claude_args: |
-            --allowedTools "Read,Glob,Grep,Bash(gh pr *),Bash(gh api *)"
+            --allowedTools "Read,Glob,Grep,Bash(gh pr *)"
             --disallowedTools "Bash(rm *),Bash(sudo *),Bash(git push *),Bash(git commit *),Bash(git add *),Bash(git reset *),Bash(git checkout *),Bash(curl *),Bash(wget *),Bash(npm install *),Bash(pip install *),Bash(apt *),Bash(apt-get *)"
             --model claude-sonnet-4-6
             --fallback-model claude-haiku-4-5-20251001

@@ -44,7 +44,7 @@ jobs:
           # TODO: consider --debug-file in claude_args + upload-artifact step with if: failure()
           #       for silent-fail diagnostics (deferred — add only if silent fails actually start appearing)
           claude_args: |
-            --allowedTools "Read,Glob,Grep,Bash,Write"
+            --allowedTools "Read,Glob,Grep,Write,Bash(git diff:*),Bash(find:*),Bash(date:*),Bash(mkdir:*),Bash(python3:*),Bash(gh pr comment:*)"
             --disallowedTools "Bash(rm *),Bash(sudo *),Bash(git push *),Bash(git commit *),Bash(git add *),Bash(git reset *),Bash(git checkout *),Bash(curl *),Bash(wget *),Bash(npm install *),Bash(pip install *),Bash(apt *),Bash(apt-get *)"
             --model claude-sonnet-4-6
             --fallback-model claude-haiku-4-5-20251001
@@ -61,7 +61,7 @@ jobs:
             If this is a PR (base ref is "${{ github.base_ref }}", non-empty means PR), run:
               git diff --name-only origin/${{ github.base_ref }}...HEAD -- '**/Dockerfile*' '**/docker-compose*.yml' '**/compose.yml' '**/compose.yaml' '**/.dockerignore'
             If base ref is empty (workflow_dispatch), list all Docker files instead:
-              find . -type f \( -name 'Dockerfile' -o -name 'Dockerfile.*' -o -name 'docker-compose*.yml' -o -name 'compose.yml' -o -name 'compose.yaml' -o -name '.dockerignore' \) -not -path './node_modules/*' -not -path './.git/*' 2>/dev/null || true
+              find . -type f \( -name 'Dockerfile' -o -name 'Dockerfile.*' -o -name 'docker-compose*.yml' -o -name 'compose.yml' -o -name 'compose.yaml' -o -name '.dockerignore' \) -not -path './node_modules/*' -not -path './.git/*' 2>/dev/null
             Read each discovered file with the Read tool before starting the review.
 
             Step 1 — Review each file. Read `docs/references/docker-best-practices.md` for the full project-specific rules.
@@ -120,12 +120,12 @@ jobs:
             with open('_site/index.html', 'w') as o: o.write(tmpl.replace('REVIEW_DATA_PLACEHOLDER', data))
             PY
 
-            Step 4 — Post findings as a PR comment using the gh CLI (skip on workflow_dispatch where there is no PR).
+            Step 4 — Post findings as a PR comment using the gh CLI.
+            This run's event is "${{ github.event_name }}" — if it is not "pull_request", skip this step entirely
+            (workflow_dispatch has no PR to comment on).
             Use the Write tool to write the full comment body to /tmp/pr-comment.md (do NOT use a shell heredoc —
             backticks, $, and special characters in the review text will break shell quoting). Then post it:
-              if [ "${{ github.event_name }}" = "pull_request" ]; then
-                gh pr comment ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --body-file /tmp/pr-comment.md
-              fi
+              gh pr comment ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --body-file /tmp/pr-comment.md
 
             The PR comment must contain:
             - A bullet list of files reviewed

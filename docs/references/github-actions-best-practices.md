@@ -531,14 +531,20 @@ permissions:
 
 ### 2. Tool allowlist via `claude_args`
 
-In CI mode, `Bash` is blocked by default. Claude needs it to read the PR diff and post the review:
+In CI mode, `Bash` is blocked by default. Claude needs explicit allow rules to read the PR diff and post the review:
 
 ```yaml
 with:
-  claude_args: '--allowedTools "Bash(gh pr *),Bash(gh api *)"'
+  claude_args: '--allowedTools "Read,Glob,Grep,Bash(gh pr *)"'
 ```
 
-`Bash(gh pr *)` covers `gh pr diff`, `gh pr comment`, `gh pr view`. Without this, Claude attempts the calls, hits permission denials, and exits without posting.
+`Bash(gh pr *)` covers `gh pr diff`, `gh pr comment`, `gh pr view`. Without an allowlist, Claude attempts the calls, hits permission denials, and exits without posting.
+
+Scope Bash rules to the exact commands the prompt needs — never allow bare `Bash` with a deny-list on top: deny-lists are bypassable (`sh -c "..."`, full binary paths, interpreters like `python3 -c`). Rules match by prefix; both `Bash(gh pr *)` (space form) and `Bash(gh pr:*)` (colon form) work.
+
+Two prompt-side traps when narrowing the allowlist:
+- Shell operators split a command into parts that are permission-checked individually — `find ... || true` is denied unless `true` is also allowed; drop the `|| true`.
+- A command wrapped in `if ...; then` starts with `if` and no longer matches `Bash(gh pr comment:*)` — move conditional logic into the prompt text ("if the event is not pull_request, skip this step") and keep the command bare.
 
 ### 3. Use `prompt`, not `direct_prompt`
 
