@@ -1,0 +1,13 @@
+name: Demo Broken (AI-review test)
+
+# Intentionally violates several best practices to exercise gha-review.yml.
+# manual-only trigger so this file does not spawn its own runs on the PR.
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "no workflow-level permissions, no timeout-minutes, no concurrency, tag-pinned action"

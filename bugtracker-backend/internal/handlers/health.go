@@ -20,5 +20,6 @@ func HealthCheck(w http.ResponseWriter, r *http.Request) {
 		Status:  "ok",
 		Version: config.Backend_Version,
 	}
+	w.WriteHeader(200)
 	json.NewEncoder(w).Encode(response)
 } 
