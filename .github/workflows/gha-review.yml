@@ -28,6 +28,8 @@ jobs:
     permissions:
       contents: read         # checkout + composite action reads template/scripts from the tree
       pull-requests: write   # gh pr comment posts the findings summary to the PR conversation
+      issues: write          # claude-code-action's agent-mode GitHub writes go through the issues-comments API
+      id-token: write        # claude-code-action mints its GitHub App token via OIDC token exchange
 
     steps:
       - name: Checkout repository
