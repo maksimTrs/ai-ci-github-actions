@@ -174,32 +174,19 @@ CI test reports are published to GitHub Pages on every successful push to `main`
 - `/e2e/` — Playwright browser report
 - `/perf/` — k6 HTML summary
 
-Pages publication is **serialized** via a workflow-spanning concurrency group named `pages-deploy`. Both `ci.yml` and `gha-review.yml` (which also deploys to Pages) share this group, so deploys never race or overwrite each other:
-
-```mermaid
-sequenceDiagram
-    participant M as Push to main
-    participant CI as ci.yml<br/>publish-pages
-    participant PR as PR sync
-    participant GR as gha-review.yml<br/>deploy
-    participant P as GitHub Pages
-
-    Note over CI,GR: Shared concurrency group: pages-deploy<br/>(cancel-in-progress: false)
-
-    M->>CI: trigger
-    activate CI
-    PR->>GR: trigger
-    GR-->>GR: queued, waits for CI to finish
-    CI->>P: deploy CI reports
-    deactivate CI
-    activate GR
-    GR->>P: deploy review HTML
-    deactivate GR
-```
-
-Without the shared group, both workflows would race — `actions/deploy-pages` serializes server-side, but the order would be non-deterministic and the last writer's content wins.
+`ci.yml` is the **single owner** of the Pages site. A repository has exactly one Pages deployment, and `actions/deploy-pages` replaces the whole site on every deploy — multiple workflows publishing to the same site silently overwrite each other (last writer wins; a shared concurrency group only serializes the overwrites). For this reason the AI review workflows do not deploy to Pages; they publish their HTML reports as workflow artifacts instead (see "AI review reports" below). The `pages-deploy` concurrency group with `cancel-in-progress: false` stays on the `publish-pages` job so rapid pushes to `main` queue deploys rather than interrupting one mid-flight.
 
 The landing page itself is rendered from `.github/pages/index.template.html` via `envsubst` with an explicit variable whitelist (`SHORT_SHA`, `TIMESTAMP`, `RUN_NUMBER`), so no other environment variable — including `GITHUB_TOKEN` — can leak into the rendered HTML.
+
+### AI review reports
+
+The three AI review workflows (`gha-review.yml`, `jenkinsfile-review.yml`, `docker-review.yml`) share one publishing contract, implemented by the `publish-review-report` composite action:
+
+1. The Claude review step produces a single deliverable — `review-output/review-data.json` with severity-ranked findings.
+2. The composite action renders that JSON into a self-contained HTML report (`docs/review-template.html`) and uploads it as a workflow artifact.
+3. It then posts a PR comment with a severity summary table, collapsible per-severity finding details, and a download link to the HTML artifact (the `artifact-url` output of `actions/upload-artifact`).
+
+The AI agent never renders reports or posts comments itself — it emits data; deterministic workflow steps own rendering and publishing. Artifact downloads require a logged-in GitHub user and expire with the artifact retention period (14 days).
 
 ### Validating workflow edits
 
@@ -224,7 +211,8 @@ Practices enforced across both Jenkins and GHA in this repo:
 - **SHA-pin every third-party action.** Pinning by tag (`@v4`) is mutable; only full-SHA pinning is supply-chain-safe.
 - **Default-deny workflow permissions.** Workflow-level `permissions: { contents: read }`; per-job grants add only what that job needs.
 - **`if: ${{ !cancelled() }}` over `always()` for reporting and cleanup.** `always()` runs even on user-initiated cancellation; rarely what you want.
-- **Shared concurrency group for GitHub Pages.** Two workflows publishing to the same Pages site must share a `pages-deploy` group to prevent race conditions and last-writer-wins surprises.
+- **Single owner for GitHub Pages.** `actions/deploy-pages` replaces the entire site per deploy and a repo has exactly one Pages site — so exactly one workflow (`ci.yml`) deploys to it. Other workflows publish HTML reports as artifacts linked from PR comments.
+- **AI agents emit data, pipelines render it.** Review workflows constrain the Claude step to writing `review-data.json`; HTML rendering, artifact upload, and PR commenting are deterministic steps shared via a composite action.
 - **`--body-file` for safe `gh pr comment`.** Body content passed inline (`--body "..."`) is shell-interpolated and vulnerable to backticks, `$(...)`, and quotes in the text; `--body-file` bypasses the shell parser entirely.
 - **Single-quoted heredoc (`<<'EOF'`) inside `withCredentials` and shell prompts.** Stops `$`, backticks, and `${{ }}` from being interpolated before the command runs.
 - **JUnit XML from k6 via `handleSummary`.** No xk6 extensions needed — emit JUnit inline so the perf job posts a native test check on both GHA and Jenkins.

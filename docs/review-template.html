@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Jenkinsfile Review</title>
+  <title>Review Report</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -175,6 +175,18 @@
       color: #24292f;
     }
 
+    .finding-file {
+      font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+      font-size: 11px;
+      color: #57606a;
+      background: #f6f8fa;
+      border: 1px solid #d0d7de;
+      border-radius: 4px;
+      padding: 1px 6px;
+      margin-left: auto;
+      white-space: nowrap;
+    }
+
     .finding-desc {
       color: #57606a;
       font-size: 13px;
@@ -209,7 +221,7 @@
 <body>
 <div class="container">
   <div class="page-header">
-    <h1 id="title">Jenkinsfile Review</h1>
+    <h1 id="title">Review</h1>
     <div class="meta" id="meta"></div>
   </div>
   <div class="summary" id="summary"></div>
@@ -247,8 +259,10 @@ function cssVar(element, key, value) {
 }
 
 // Header
+const baseTitle = reviewData.title || 'Review';
+document.title = baseTitle;
 document.getElementById('title').textContent =
-  reviewData.pr ? `Jenkinsfile Review — PR #${reviewData.pr}` : 'Jenkinsfile Review';
+  reviewData.pr ? `${baseTitle} — PR #${reviewData.pr}` : baseTitle;
 const ts = reviewData.generated_at ? new Date(reviewData.generated_at).toLocaleString() : '';
 document.getElementById('meta').textContent =
   [reviewData.repo, ts].filter(Boolean).join(' · ');
@@ -270,7 +284,7 @@ const contentEl = document.getElementById('content');
 
 if (findings.length === 0) {
   contentEl.appendChild(
-    el('div', { class: 'no-issues' }, '✓ No issues found — Jenkinsfile follows best practices')
+    el('div', { class: 'no-issues' }, '✓ No issues found — reviewed files follow best practices')
   );
 } else {
   for (const s of SEVERITIES) {
@@ -295,7 +309,8 @@ if (findings.length === 0) {
         el('div', { class: 'finding' },
           el('div', { class: 'finding-header' },
             badge,
-            el('span', { class: 'finding-title' }, f.title || '')
+            el('span', { class: 'finding-title' }, f.title || ''),
+            f.file ? el('code', { class: 'finding-file' }, f.file) : null
           ),
           el('div', { class: 'finding-desc' }, f.description || ''),
           el('div', { class: 'fix-box' },

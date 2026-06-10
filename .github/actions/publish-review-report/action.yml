@@ -1,0 +1,79 @@
+name: Publish Review Report
+description: Render AI review JSON into an HTML artifact and post a summary PR comment with the download link
+
+inputs:
+  review-json:
+    description: Path to the review-data.json produced by the review step
+    required: true
+  report-title:
+    description: Human-readable report title (HTML page header and PR comment heading)
+    required: true
+  artifact-name:
+    description: Name for the uploaded HTML report artifact
+    required: true
+  pr-number:
+    description: Pull request number to comment on (empty skips the comment — e.g. workflow_dispatch runs)
+    required: false
+    default: ''
+  github-token:
+    description: Token used by the gh CLI to post the PR comment
+    required: true
+  template:
+    description: Path to the HTML report template
+    required: false
+    default: docs/review-template.html
+  retention-days:
+    description: Artifact retention in days
+    required: false
+    default: '14'
+
+runs:
+  using: composite
+  steps:
+    - name: Render HTML report
+      shell: bash
+      env:
+        REVIEW_JSON: ${{ inputs.review-json }}
+        TEMPLATE: ${{ inputs.template }}
+        REPORT_TITLE: ${{ inputs.report-title }}
+      run: |
+        python3 "${{ github.action_path }}/render_report.py" \
+          --data "$REVIEW_JSON" \
+          --template "$TEMPLATE" \
+          --title "$REPORT_TITLE" \
+          --out review-output/index.html
+
+    - name: Upload report artifact
+      id: upload
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: review-output/
+        retention-days: ${{ inputs.retention-days }}
+        if-no-files-found: error
+        overwrite: true
+
+    - name: Render PR comment
+      if: ${{ inputs.pr-number != '' }}
+      shell: bash
+      env:
+        REVIEW_JSON: ${{ inputs.review-json }}
+        REPORT_TITLE: ${{ inputs.report-title }}
+        ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+      run: |
+        python3 "${{ github.action_path }}/render_comment.py" \
+          --data "$REVIEW_JSON" \
+          --title "$REPORT_TITLE" \
+          --artifact-url "$ARTIFACT_URL" \
+          --out "$RUNNER_TEMP/review-comment.md"
+
+    - name: Post PR comment
+      if: ${{ inputs.pr-number != '' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+      run: |
+        gh pr comment "$PR_NUMBER" \
+          --repo "$GITHUB_REPOSITORY" \
+          --body-file "$RUNNER_TEMP/review-comment.md"
