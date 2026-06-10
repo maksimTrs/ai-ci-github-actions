@@ -7,6 +7,7 @@ on:
       - 'docs/**'
       - '**/*.md'
       - '.github/workflows/**'  # all workflow YAML changes — none test application code; use workflow_dispatch to validate ci.yml edits
+      - '.github/actions/**'     # composite actions — CI plumbing, not application code; validated on the next app-code PR
       - 'Jenkinsfile'            # Jenkins pipeline — separate stack, unrelated to GHA CI
       - 'jenkins/**'             # local Jenkins instance setup (Dockerfile, compose) — also Jenkins-side only
       - '**/Dockerfile'          # Docker assets — covered by docker-review.yml; accepted trade-off: image build is exercised on the next non-Docker PR
@@ -21,6 +22,7 @@ on:
       - 'docs/**'
       - '**/*.md'
       - '.github/workflows/**'
+      - '.github/actions/**'
       - 'Jenkinsfile'
       - 'jenkins/**'
       - '**/Dockerfile'
