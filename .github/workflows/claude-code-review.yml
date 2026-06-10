@@ -8,8 +8,7 @@ on:
       # Areas already covered by specialized reviewers — avoid double review
       - 'Jenkinsfile'
       - 'jenkins/**'  # Jenkins infra (Dockerfile, compose, scripts) — separate stack, not application code
-      - '.github/workflows/**'
-      - '.github/actions/**'
+      - '.github/**'  # workflows/actions belong to gha-review; the rest (dependabot, CODEOWNERS, Pages template) is config plumbing, not app code
       - '**/Dockerfile'
       - '**/Dockerfile.*'
       - '**/docker-compose*.yml'

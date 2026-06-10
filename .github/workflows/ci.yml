@@ -6,8 +6,13 @@ on:
     paths-ignore:
       - 'docs/**'
       - '**/*.md'
-      - '.github/workflows/**'  # all workflow YAML changes — none test application code; use workflow_dispatch to validate ci.yml edits
-      - '.github/actions/**'     # composite actions — CI plumbing, not application code; validated on the next app-code PR
+      # All of .github/ is CI plumbing (workflows, composite actions, dependabot,
+      # CODEOWNERS, Pages template) — none of it tests application code. A run is
+      # skipped only when EVERY changed file is ignored, so the previous partial list
+      # (workflows/** + actions/**) let CODEOWNERS/dependabot pushes trigger full runs.
+      # Validate ci.yml edits via workflow_dispatch; a Pages-template-only change
+      # reaches Pages on the next app-code push.
+      - '.github/**'
       - 'Jenkinsfile'            # Jenkins pipeline — separate stack, unrelated to GHA CI
       - 'jenkins/**'             # local Jenkins instance setup (Dockerfile, compose) — also Jenkins-side only
       - '**/Dockerfile'          # Docker assets — covered by docker-review.yml; accepted trade-off: image build is exercised on the next non-Docker PR
@@ -21,8 +26,7 @@ on:
     paths-ignore:
       - 'docs/**'
       - '**/*.md'
-      - '.github/workflows/**'
-      - '.github/actions/**'
+      - '.github/**'
       - 'Jenkinsfile'
       - 'jenkins/**'
       - '**/Dockerfile'

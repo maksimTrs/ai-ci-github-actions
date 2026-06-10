@@ -49,11 +49,11 @@ Six workflows divide responsibility by **trigger zone**. Each owns one slice of 
 
 | Workflow | Triggered on changes to | Purpose | Bot filter |
 |---|---|---|---|
-| `ci.yml` | application code only (workflow YAML, `.github/actions/**`, `Dockerfile*`, `docker-compose*`, `Jenkinsfile`, `jenkins/**`, docs and markdown are all excluded via `paths-ignore`) | Run all tests (unit + API + E2E + perf), publish JUnit checks, deploy reports to GitHub Pages | — (not AI) |
+| `ci.yml` | application code only (`.github/**`, `Dockerfile*`, `docker-compose*`, `Jenkinsfile`, `jenkins/**`, docs and markdown are all excluded via `paths-ignore`) | Run all tests (unit + API + E2E + perf), publish JUnit checks, deploy reports to GitHub Pages | — (not AI) |
 | `gha-review.yml` | `.github/workflows/*.yml`, `.github/actions/**/action.yml` | AI review of GHA workflow files against project best practices; comments severity-ranked findings on PR | yes |
 | `jenkinsfile-review.yml` | `Jenkinsfile` | AI review of the Jenkins pipeline against project best practices | yes |
 | `docker-review.yml` | `**/Dockerfile*`, `**/docker-compose*.yml`, `**/compose.y?ml`, `**/.dockerignore` | AI review of Docker images and Compose stacks against project best practices | yes |
-| `claude-code-review.yml` | everything else (app code), except: `Jenkinsfile`, all workflow YAML, Docker files, `.dockerignore`, docs, markdown | General AI code review of application changes | yes |
+| `claude-code-review.yml` | everything else (app code), except: `Jenkinsfile`, all of `.github/`, Docker files, `.dockerignore`, docs, markdown | General AI code review of application changes | yes |
 | `claude.yml` | `@claude` mentions in issues / PR comments | Responds to direct mentions in conversation | n/a (mention is the filter) |
 
 ### Trigger logic
@@ -62,12 +62,13 @@ The six workflows are deliberately mutually exclusive on most file changes:
 
 - PR changing **application code** → `ci.yml` (tests) + `claude-code-review.yml` (AI review)
 - PR changing **`.github/workflows/**`** → `gha-review.yml` only — `ci.yml` excludes all workflow YAML via `paths-ignore`
-- PR changing **`.github/actions/**`** → `gha-review.yml` only — `ci.yml` also excludes `.github/actions/**` via `paths-ignore`; the composite actions are validated on the next application-code PR rather than re-running the full matrix on every plumbing tweak
+- PR changing **`.github/actions/**`** → `gha-review.yml` only — `ci.yml` excludes all of `.github/**` via `paths-ignore`; the composite actions are validated on the next application-code PR rather than re-running the full matrix on every plumbing tweak
+- PR changing **`.github/` config plumbing** (`dependabot.yml`, `CODEOWNERS`, the Pages template) → no workflow runs at all — same treatment as docs
 - PR changing **`Jenkinsfile`** → `jenkinsfile-review.yml` only
 - PR changing **`Dockerfile*` / `docker-compose*.yml` / `.dockerignore`** → `docker-review.yml` only — `ci.yml` excludes Docker assets via `paths-ignore` (a broken image would produce infra noise, not test signal; the image build is exercised on the next application-code PR)
 - PR changing **docs / README only** → no workflow runs at all — no AI quota spent on prose
 
-`ci.yml` deliberately does **not** re-run on changes to its own YAML, the composite actions under `.github/actions/**`, or Docker assets — all are listed in its `paths-ignore`. The composite action `publish-test-results` is used inside `ci.yml`, but edits to it are validated on the next application-code PR (or via `workflow_dispatch`, a manual run from the Actions tab) rather than burning ~20 minutes of the full test matrix on a plumbing change.
+`ci.yml` deliberately does **not** re-run on changes to anything under `.github/` (its own YAML, composite actions, dependabot/CODEOWNERS config, the Pages template) or Docker assets — all covered by its `paths-ignore`. The composite action `publish-test-results` is used inside `ci.yml`, but edits to it are validated on the next application-code PR (or via `workflow_dispatch`, a manual run from the Actions tab) rather than burning ~20 minutes of the full test matrix on a plumbing change.
 
 ### `ci.yml` — job dependency graph
 
