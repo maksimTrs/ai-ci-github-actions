@@ -20,7 +20,8 @@ For application setup, local dev commands, and stack details, see [APP.md](./APP
 │   ├── claude-code-review.yml     #   AI review of application code
 │   └── claude.yml                 #   @claude mention responder
 ├── actions/
-│   └── publish-test-results/      # Composite action — JUnit check + HTML artifact
+│   ├── publish-test-results/      # Composite action — JUnit check + HTML artifact (used by ci.yml)
+│   └── publish-review-report/     # Composite action — renders review JSON → HTML + PR comment (used by the AI review workflows)
 └── pages/
     └── index.template.html        # Landing page template for Pages site
 
@@ -44,7 +45,7 @@ Six workflows divide responsibility by **trigger zone**. Each owns one slice of 
 
 | Workflow | Triggered on changes to | Purpose | Bot filter |
 |---|---|---|---|
-| `ci.yml` | application code, `Dockerfile`, `docker-compose`, `.github/actions/**` | Run all tests (unit + API + E2E + perf), publish JUnit checks, deploy reports to GitHub Pages | — (not AI) |
+| `ci.yml` | application code only (workflow YAML, `.github/actions/**`, `Dockerfile*`, `docker-compose*`, `Jenkinsfile`, `jenkins/**`, docs and markdown are all excluded via `paths-ignore`) | Run all tests (unit + API + E2E + perf), publish JUnit checks, deploy reports to GitHub Pages | — (not AI) |
 | `gha-review.yml` | `.github/workflows/*.yml`, `.github/actions/**/action.yml` | AI review of GHA workflow files against project best practices; comments severity-ranked findings on PR | yes |
 | `jenkinsfile-review.yml` | `Jenkinsfile` | AI review of the Jenkins pipeline against project best practices | yes |
 | `docker-review.yml` | `**/Dockerfile*`, `**/docker-compose*.yml`, `**/compose.y?ml`, `**/.dockerignore` | AI review of Docker images and Compose stacks against project best practices | yes |
@@ -57,12 +58,12 @@ The six workflows are deliberately mutually exclusive on most file changes:
 
 - PR changing **application code** → `ci.yml` (tests) + `claude-code-review.yml` (AI review)
 - PR changing **`.github/workflows/**`** → `gha-review.yml` only — `ci.yml` excludes all workflow YAML via `paths-ignore`
-- PR changing **`.github/actions/**`** → `gha-review.yml` + `ci.yml` — the composite action (`publish-test-results`) is used inside `ci.yml`, so tests re-run to validate it
+- PR changing **`.github/actions/**`** → `gha-review.yml` only — `ci.yml` also excludes `.github/actions/**` via `paths-ignore`; the composite actions are validated on the next application-code PR rather than re-running the full matrix on every plumbing tweak
 - PR changing **`Jenkinsfile`** → `jenkinsfile-review.yml` only
-- PR changing **`Dockerfile*` / `docker-compose*.yml` / `.dockerignore`** → `docker-review.yml` (best-practice review) + `ci.yml` (image rebuild + tests against the new image)
+- PR changing **`Dockerfile*` / `docker-compose*.yml` / `.dockerignore`** → `docker-review.yml` only — `ci.yml` excludes Docker assets via `paths-ignore` (a broken image would produce infra noise, not test signal; the image build is exercised on the next application-code PR)
 - PR changing **docs / README only** → no workflow runs at all — no AI quota spent on prose
 
-`ci.yml` *does* re-run on changes to the composite action `publish-test-results` because that action is used inside it. It does **not** re-run on changes to its own YAML — validate workflow edits via `workflow_dispatch` (manual run from the Actions tab) to avoid burning 20 minutes of tests on a comment change.
+`ci.yml` deliberately does **not** re-run on changes to its own YAML, the composite actions under `.github/actions/**`, or Docker assets — all are listed in its `paths-ignore`. The composite action `publish-test-results` is used inside `ci.yml`, but edits to it are validated on the next application-code PR (or via `workflow_dispatch`, a manual run from the Actions tab) rather than burning ~20 minutes of the full test matrix on a plumbing change.
 
 ### `ci.yml` — job dependency graph
 
