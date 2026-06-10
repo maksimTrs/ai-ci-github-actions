@@ -54,7 +54,11 @@ jobs:
           # Optional: Give a custom prompt to Claude. If this is not specified, Claude will perform the instructions specified in the comment that tagged it.
           # prompt: 'Update the pull request description to include a summary of changes.'
 
-          # Optional: Add claude_args to customize behavior and configuration
+          # Cost guardrails — mention mode executes arbitrary requests from comments and is
+          # otherwise capped only by timeout-minutes. No --bare here: CLAUDE.md context is
+          # useful when answering repo questions interactively.
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
-          # or https://code.claude.com/docs/en/cli-reference for available options
-          # claude_args: '--allowed-tools Bash(gh pr *)'
+          claude_args: |
+            --max-turns 25
+            --max-budget-usd 3.00
+            --fallback-model claude-haiku-4-5-20251001
