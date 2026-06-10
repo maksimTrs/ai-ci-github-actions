@@ -63,7 +63,9 @@ jobs:
 
             Step 0 — Find changed files.
             If this is a PR (base ref is "${{ github.base_ref }}", non-empty means PR), run:
-              git diff --name-only origin/${{ github.base_ref }}...HEAD -- '**/Dockerfile*' '**/docker-compose*.yml' '**/compose.yml' '**/compose.yaml' '**/.dockerignore'
+              git diff --name-only origin/${{ github.base_ref }}...HEAD -- ':(glob)**/Dockerfile*' ':(glob)**/docker-compose*.yml' ':(glob)**/compose.yml' ':(glob)**/compose.yaml' ':(glob)**/.dockerignore'
+            The :(glob) magic is required: default git pathspec matching needs a literal "/" before
+            the filename, so a plain '**/docker-compose*.yml' silently misses the root-level docker-compose.yml.
             If base ref is empty (workflow_dispatch), list all Docker files instead:
               find . -type f \( -name 'Dockerfile' -o -name 'Dockerfile.*' -o -name 'docker-compose*.yml' -o -name 'compose.yml' -o -name 'compose.yaml' -o -name '.dockerignore' \) -not -path './node_modules/*' -not -path './.git/*' 2>/dev/null
             Read each discovered file with the Read tool before starting the review.

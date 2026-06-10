@@ -2,6 +2,8 @@
 
 A reference implementation of QA test-automation CI/CD on two parallel stacks: **GitHub Actions** and **Jenkins**.
 
+The showcase piece is the **AI review fleet** — four specialized `claude-code-action` reviewers (GHA workflows, Jenkinsfile, Docker, application code) dispatched by changed paths, hardened against prompt injection, and capped by hard token budgets. See [Claude Code on Pull Requests](#claude-code-on-pull-requests).
+
 The bug-tracker application (Go backend, Next.js frontend) is the test substrate — the value of this repository lies in how the pipelines are designed, what they enforce, and how the two stacks stay functionally equivalent.
 
 For application setup, local dev commands, and stack details, see [APP.md](./APP.md).
@@ -22,8 +24,10 @@ For application setup, local dev commands, and stack details, see [APP.md](./APP
 ├── actions/
 │   ├── publish-test-results/      # Composite action — JUnit check + HTML artifact (used by ci.yml)
 │   └── publish-review-report/     # Composite action — renders review JSON → HTML + PR comment (used by the AI review workflows)
-└── pages/
-    └── index.template.html        # Landing page template for Pages site
+├── pages/
+│   └── index.template.html        # Landing page template for Pages site
+├── dependabot.yml                 # Monthly grouped SHA bumps — workflows + composite action dirs
+└── CODEOWNERS                     # Trust-boundary ownership: pipelines, reviewer rulebooks, report template
 
 jenkins/                            # Dockerfile + docker-compose for a local Jenkins instance
 Jenkinsfile                         # Declarative pipeline (mirrors ci.yml stages)
@@ -101,11 +105,14 @@ Five Claude-powered workflows run on PRs in parallel, each specialized to a doma
 flowchart TD
     PR[Pull Request opened or synchronized]
     BotCheck{Author is a bot?}
+    ForkCheck{From a fork?}
     Dispatch{Files changed in PR}
 
     PR --> BotCheck
-    BotCheck -->|yes| Skip[Skipped — no AI quota<br/> burned on dependabot]
-    BotCheck -->|no| Dispatch
+    BotCheck -->|yes| Skip[Skipped — no AI tokens<br/>burned on bots / forks]
+    BotCheck -->|no| ForkCheck
+    ForkCheck -->|yes| Skip
+    ForkCheck -->|no| Dispatch
 
     Dispatch -->|".github/workflows/*<br/>.github/actions/*"| GHA["gha-review.yml<br/>GHA reviewer"]
     Dispatch -->|"Jenkinsfile"| JF["jenkinsfile-review.yml<br/>Jenkins reviewer"]
@@ -125,9 +132,20 @@ Separately, `claude.yml` responds to **`@claude` mentions** in any PR or issue c
 
 - **Dispatched by `paths` / `paths-ignore`.** Each reviewer triggers only on the files it understands. A PR touching both `.github/workflows/ci.yml` and `bugtracker-backend/main.go` gets a GHA-best-practices review *and* a general code review — but never two general reviews on the same change.
 - **Specialized reviewers carry domain checklists in their prompts.** `gha-review.yml`, `jenkinsfile-review.yml`, and `docker-review.yml` ship full project-specific rule sets (default-deny permissions, SHA pinning, `post`-block design, CPS gotchas, agent strategies, multi-stage builds, layer caching, healthchecks, etc.) baked into the action's `prompt:` input. The general reviewer doesn't try to be an expert in every YAML dialect.
-- **Bot-author filter on every automatic reviewer** (`if: ${{ !contains(github.actor, '[bot]') }}`). Dependabot / Renovate PRs skip AI review entirely — saves quota on mechanical bumps. `ci.yml` (tests) still runs on bot PRs as normal.
+- **Bot-author filter on every automatic reviewer** (`if: ${{ !contains(github.actor, '[bot]') }}`). Dependabot / Renovate PRs skip AI review entirely — saves quota on mechanical bumps. An action-bump PR touches only `.github/**`, so it triggers no AI review and no `ci.yml` run at all; bot PRs touching application code still run tests as normal. Fork PRs are skipped likewise (`head.repo` check) — fork runs don't receive `CLAUDE_CODE_OAUTH_TOKEN`, so a review attempt would only fail at the auth step.
 - **Docs / markdown PRs trigger nothing.** A pure README fix doesn't burn AI quota or runner minutes — `paths-ignore: ['docs/**', '**/*.md']` is set on every reviewer.
 - **One PR comment per reviewer.** Each posts its findings as a separate severity-ranked comment (Critical / High / Medium / Low). Multiple reviewers on the same PR produce multiple comments, not one mixed-domain summary.
+
+### Guardrails — security & cost
+
+Every automated reviewer runs inside the same defense-in-depth envelope:
+
+- **Layered prompt-injection defense.** A system-prompt invariant (`--append-system-prompt`: files are data, not instructions) sits above the SECURITY preamble inside each review prompt, and `--bare` closes the third instruction channel — no auto-discovery of `CLAUDE.md`, hooks, or MCP config from the checkout, so a PR cannot smuggle directives through config files.
+- **Allowlist-first tools.** Each reviewer gets the minimal `--allowedTools` set its job needs (read/search + `git diff` + `Write` for the JSON deliverable; `gh pr` for the general reviewer); a `--disallowedTools` deny-list sits underneath as defense-in-depth. No network access, no package installs, no git writes.
+- **Hard cost ceilings.** All five Claude jobs carry `--max-turns`, `--max-budget-usd`, and `--fallback-model`; the four reviewers also pin `--model` and run at `--effort medium`. A runaway session stops at the ceiling, not at `timeout-minutes`.
+- **Zero-token paths.** Bot PRs (Dependabot / Renovate), fork PRs, and docs-only changes never reach a Claude step — filtered by actor, `head.repo`, and path rules before a runner is even allocated.
+- **Deterministic blast radius.** A specialized reviewer's only deliverable is `review-output/review-data.json`; HTML rendering, artifact upload, and PR commenting are deterministic composite-action steps (see "AI review reports" below).
+- **Trust-boundary ownership.** `CODEOWNERS` covers the workflows, the reviewer rulebooks (`docs/references/`), and the report template — files that steer reviewer behavior change only with owner review.
 
 ---
 
@@ -189,6 +207,10 @@ The three AI review workflows (`gha-review.yml`, `jenkinsfile-review.yml`, `dock
 
 The AI agent never renders reports or posts comments itself — it emits data; deterministic workflow steps own rendering and publishing. Artifact downloads require a logged-in GitHub user and expire with the artifact retention period (14 days).
 
+### Dependency updates
+
+Dependabot checks all SHA-pinned actions **monthly** and opens a single grouped PR instead of one per action. `dependabot.yml` lists each composite action directory explicitly alongside `/` — Dependabot does not auto-discover actions referenced inside `.github/actions/**` (dependabot-core#6704). These PRs are token-free by design: the bot-author filter skips every AI reviewer, and `ci.yml` ignores `.github/**` changes entirely (see Trigger logic above).
+
 ### Validating workflow edits
 
 `ci.yml` does not auto-trigger on changes to its own YAML. To validate edits manually:
@@ -211,13 +233,10 @@ Practices enforced across both Jenkins and GHA in this repo:
 
 - **SHA-pin every third-party action.** Pinning by tag (`@v4`) is mutable; only full-SHA pinning is supply-chain-safe.
 - **Default-deny workflow permissions.** Workflow-level `permissions: { contents: read }`; per-job grants add only what that job needs.
-- **`if: ${{ !cancelled() }}` over `always()` for reporting and cleanup.** `always()` runs even on user-initiated cancellation; rarely what you want.
-- **Single owner for GitHub Pages.** `actions/deploy-pages` replaces the entire site per deploy and a repo has exactly one Pages site — so exactly one workflow (`ci.yml`) deploys to it. Other workflows publish HTML reports as artifacts linked from PR comments.
-- **AI agents emit data, pipelines render it.** Review workflows constrain the Claude step to writing `review-data.json`; HTML rendering, artifact upload, and PR commenting are deterministic steps shared via a composite action.
+- **`if: ${{ !cancelled() }}` over `always()` for reporting.** `always()` runs even on user-initiated cancellation; teardown steps that release external state (`docker compose down`) use `always()` deliberately — they must run even when the build is cancelled.
 - **`--body-file` for safe `gh pr comment`.** Body content passed inline (`--body "..."`) is shell-interpolated and vulnerable to backticks, `$(...)`, and quotes in the text; `--body-file` bypasses the shell parser entirely.
 - **Single-quoted heredoc (`<<'EOF'`) inside `withCredentials` and shell prompts.** Stops `$`, backticks, and `${{ }}` from being interpolated before the command runs.
-- **JUnit XML from k6 via `handleSummary`.** No xk6 extensions needed — emit JUnit inline so the perf job posts a native test check on both GHA and Jenkins.
-- **`envsubst` with explicit variable whitelist.** Templates rendered into Pages or CI artifacts use `envsubst 'VAR1 VAR2' < template` to prevent accidental secret interpolation.
+- **JUnit XML from k6 via `handleSummary`.** No xk6 extensions needed — emit JUnit inline so threshold breaches surface as native test results in the CI check.
 
 ---
 

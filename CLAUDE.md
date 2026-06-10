@@ -51,7 +51,7 @@ When introducing or suggesting names for **pipelines, jobs, stages, shared-libra
 When writing or reviewing pipeline code, **proactively** flag non-obvious behavior with `> ОБРАТИ ВНИМАНИЕ:` — don't wait for the bug. One gotcha per callout, only flag what's relevant to the code at hand.
 
 **GitHub Actions traps:**
-- `if: always()` vs `if: ${{ !cancelled() }}` — `always()` runs even when the user cancels the workflow; rarely what you want for reporting/cleanup
+- `if: always()` vs `if: ${{ !cancelled() }}` — `always()` runs even when the user cancels the workflow; wrong for reporting, but deliberate for teardown of state that outlives the run (e.g., `docker compose down` on a self-hosted runner)
 - `pull_request_target` + checkout of PR head = secret-exfiltration vector
 - `secrets: inherit` in reusable workflows leaks all caller secrets, not just what the callee needs
 - Omitted `permissions:` defaults to read-write everywhere — silent overprivilege
@@ -196,7 +196,7 @@ A short list of rules that apply universally — apply them without consulting t
 - Pin every action by full SHA (comment the human version)
 - `timeout-minutes` on every job
 - `concurrency` group with `cancel-in-progress: true` for PR builds
-- `if: ${{ !cancelled() }}` on reporting/cleanup steps (not `always()`)
+- `if: ${{ !cancelled() }}` on reporting steps (not `always()`); teardown steps that release external state (`docker compose down`, stack cleanup) deliberately use `if: ${{ always() }}` — they must run even on user cancellation
 - `fail-fast: false` for test matrices
 
 **Jenkins:**
