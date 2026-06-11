@@ -30,10 +30,16 @@ runs:
         name: ${{ inputs.artifact-name }}
         path: ${{ inputs.html-report-dir }}
         retention-days: ${{ inputs.retention-days }}
-        if-no-files-found: warn
+        # error: publish-pages copies every suite's report into the Pages site — a missing
+        # report dir must fail here with a clear message, not later at the cp step
+        if-no-files-found: error
 
+    # Fork PRs get a read-only GITHUB_TOKEN — `checks: write` is never granted there, so
+    # the check-run API call would fail the job even when tests pass. Skip the check for
+    # forks; the HTML report artifact above is still uploaded. On push/workflow_dispatch
+    # the pull_request context is empty, `fork` resolves to null, and the step runs.
     - name: Publish test check
-      if: ${{ !cancelled() }}
+      if: ${{ !cancelled() && github.event.pull_request.head.repo.fork != true }}
       uses: dorny/test-reporter@a43b3a5f7366b97d083190328d2c652e1a8b6aa2  # v3.0.0
       with:
         name: ${{ inputs.reporter-name }}

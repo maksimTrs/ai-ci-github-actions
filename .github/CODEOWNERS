@@ -7,3 +7,8 @@
 /.github/    @maksimTrs
 /Jenkinsfile @maksimTrs
 /jenkins/    @maksimTrs
+
+# AI-reviewer rulebooks and the report template: loaded by review prompts /
+# rendered into published artifacts — they steer review behavior like code does.
+/docs/references/          @maksimTrs
+/docs/review-template.html @maksimTrs

@@ -3,12 +3,20 @@
 version: 2
 updates:
   - package-ecosystem: github-actions
-    directory: /
+    # "/" only covers .github/workflows — composite actions are NOT auto-discovered
+    # (dependabot-core#6704), so each .github/actions/* directory is listed explicitly.
+    # Add new composite actions here, or their pins will rot silently.
+    directories:
+      - /
+      - /.github/actions/publish-test-results
+      - /.github/actions/publish-review-report
     schedule:
-      interval: weekly
+      # Monthly: pins are immutable SHAs and bot PRs trigger zero AI/CI jobs anyway —
+      # the lower cadence just reduces PR-review noise.
+      interval: monthly
     open-pull-requests-limit: 5
     groups:
-      # One PR per week for all action bumps instead of one PR per action
+      # One grouped PR for all action bumps instead of one PR per action
       github-actions:
         patterns:
           - '*'

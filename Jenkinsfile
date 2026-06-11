@@ -210,13 +210,17 @@ pipeline {
             }
             post {
                 always {
+                    // parity with ci.yml: dorny/test-reporter consumes the same XML on GHA
+                    // allowEmptyResults: false — if k6 died before handleSummary wrote the XML, surface it
+                    junit testResults: 'tests-perf/test-results/results.xml',
+                          allowEmptyResults: false
                     // allowMissing: if k6 crashed before handleSummary ran, HTML won't exist — don't mask the real error
                     // keepAll: retain one report per build for cross-run comparison
                     publishHTML target: [
                         allowMissing:          true,
                         alwaysLinkToLastBuild: true,
                         keepAll:               true,
-                        reportDir:             'tests-perf',
+                        reportDir:             'tests-perf/reports',  // handleSummary writes reports/perf-results.html
                         reportFiles:           'perf-results.html',
                         reportName:            'Performance Test Results'
                     ]
