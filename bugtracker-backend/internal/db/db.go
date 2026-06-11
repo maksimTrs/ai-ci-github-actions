@@ -117,12 +117,12 @@ func GetBug(id int) (*models.Bug, error) {
 
 func GetAllBugs() ([]*models.Bug, error) {
 	var bugs []*models.Bug
+	var bug models.Bug
 
 	err := db.View(func(tx *bbolt.Tx) error {
 		b := tx.Bucket(bugsBucket)
 
 		return b.ForEach(func(k, v []byte) error {
-			var bug models.Bug
 			if err := json.Unmarshal(v, &bug); err != nil {
 				return fmt.Errorf("failed to unmarshal bug %s: %w", k, err)
 			}
