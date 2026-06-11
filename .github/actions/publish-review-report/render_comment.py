@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Render the PR comment markdown from review JSON data.
 
-Produces: title, optional files-reviewed list, one-line summary,
-severity count table, one collapsible <details> block per severity
-(critical/high pre-expanded), and the artifact download link.
+Produces: an optional hidden sticky marker, title, optional files-reviewed list,
+one-line summary, severity count table, one collapsible <details> block per
+severity (critical/high pre-expanded), and the artifact download link.
 """
 import argparse
 import json
@@ -13,11 +13,23 @@ SEVERITIES = ["critical", "high", "medium", "low"]
 BADGES = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "⚪"}
 
 
+def location(finding: dict) -> str:
+    """Return a ` — `code`` location suffix from file and/or line, or '' when neither is set."""
+    file = finding.get("file")
+    line = finding.get("line")
+    if file:
+        return f" — `{file}:{line}`" if line else f" — `{file}`"
+    if line:
+        return f" — line {line}"
+    return ""
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data", required=True, help="Path to review-data.json")
     parser.add_argument("--title", required=True, help="Report title")
     parser.add_argument("--artifact-url", default="", help="Download URL of the HTML report artifact")
+    parser.add_argument("--marker", default="", help="Hidden HTML marker for sticky-comment lookup")
     parser.add_argument("--out", required=True, help="Path to write the markdown comment")
     args = parser.parse_args()
 
@@ -25,7 +37,12 @@ def main() -> None:
     findings = data.get("findings", [])
     counts = {s: sum(1 for f in findings if f.get("severity") == s) for s in SEVERITIES}
 
-    lines = [f"## 🔍 {args.title}", ""]
+    lines = []
+    # The marker is an HTML comment: invisible in the rendered PR, preserved in the stored body
+    # so the sticky-post step can find and update this comment on the next run.
+    if args.marker:
+        lines += [args.marker, ""]
+    lines += [f"## 🔍 {args.title}", ""]
 
     reviewed = data.get("files_reviewed", [])
     if reviewed:
@@ -56,8 +73,7 @@ def main() -> None:
             lines.append(f"<summary>{BADGES[sev]} <b>{sev.capitalize()}</b> — {len(items)} {noun}</summary>")
             lines.append("")
             for finding in items:
-                where = f" — `{finding['file']}`" if finding.get("file") else ""
-                lines.append(f"#### {finding.get('title', 'Untitled')}{where}")
+                lines.append(f"#### {finding.get('title', 'Untitled')}{location(finding)}")
                 lines.append("")
                 if finding.get("description"):
                     lines += [finding["description"], ""]

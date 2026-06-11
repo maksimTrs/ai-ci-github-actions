@@ -76,6 +76,7 @@ jobs:
               "generated_at": "<UTC timestamp from above>",
               "findings": [
                 {
+                  "line": "<1-based line number in the Jenkinsfile, or null if the finding is not tied to a single line>",
                   "severity": "critical|high|medium|low",
                   "title": "Short finding title (max 80 chars)",
                   "description": "What the problem is and where in the file",
@@ -89,10 +90,12 @@ jobs:
             from it and post the PR comment with the findings summary — do not post comments,
             do not render HTML, do not run any publishing commands yourself.
 
-      # hashFiles() returns '' for a missing file — skip publishing cleanly when the
-      # review step died before writing its JSON instead of failing on render.
+      # Run on any non-cancelled finish, even if the review step errored: the action branches
+      # internally on whether review-data.json exists — rendering the report when it does, and
+      # posting a "review did not complete" sticky notice when it does not, so a truncated or
+      # failed review never passes silently as if no issues were found.
       - name: Publish review report
-        if: ${{ !cancelled() && hashFiles('review-output/review-data.json') != '' }}
+        if: ${{ !cancelled() }}
         uses: ./.github/actions/publish-review-report
         with:
           review-json: review-output/review-data.json

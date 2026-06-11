@@ -82,4 +82,9 @@ jobs:
 
             Be specific — reference file paths and line numbers.
             Skip purely stylistic nitpicks unless they affect readability significantly.
-            Post the review as a PR comment.
+
+            Post the review as a single sticky PR comment. Keep this PR to one living review
+            comment instead of adding a new one on every push: use
+              gh pr comment ${{ github.event.pull_request.number }} --edit-last --create-if-none --body "<your review>"
+            --edit-last updates your previous review comment if one exists; --create-if-none
+            posts a fresh one the first time.

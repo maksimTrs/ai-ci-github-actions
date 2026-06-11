@@ -310,7 +310,10 @@ if (findings.length === 0) {
           el('div', { class: 'finding-header' },
             badge,
             el('span', { class: 'finding-title' }, f.title || ''),
-            f.file ? el('code', { class: 'finding-file' }, f.file) : null
+            (f.file || f.line)
+              ? el('code', { class: 'finding-file' },
+                  f.file ? (f.line ? `${f.file}:${f.line}` : f.file) : `line ${f.line}`)
+              : null
           ),
           el('div', { class: 'finding-desc' }, f.description || ''),
           el('div', { class: 'fix-box' },
