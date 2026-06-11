@@ -1,5 +1,5 @@
 name: Publish Review Report
-description: Render AI review JSON into an HTML artifact and post a summary PR comment with the download link
+description: Render AI review JSON into an HTML artifact and post (or update) a single sticky PR comment with the findings summary
 
 inputs:
   review-json:
@@ -9,7 +9,7 @@ inputs:
     description: Human-readable report title (HTML page header and PR comment heading)
     required: true
   artifact-name:
-    description: Name for the uploaded HTML report artifact
+    description: Name for the uploaded HTML report artifact; also seeds the sticky-comment marker so each review type owns one comment
     required: true
   pr-number:
     description: Pull request number to comment on (empty skips the comment — e.g. workflow_dispatch runs)
@@ -30,7 +30,26 @@ inputs:
 runs:
   using: composite
   steps:
+    # The review agent writes review-data.json as its final act, so a missing/empty file means
+    # the review never finished (hit --max-turns / --max-budget-usd, or errored). Branch on that
+    # instead of skipping the whole step, so a truncated review is reported, not silently dropped.
+    - name: Detect review data
+      id: data
+      shell: bash
+      env:
+        REVIEW_JSON: ${{ inputs.review-json }}
+      run: |
+        # Require the file to exist, be non-empty, AND parse as JSON. A present-but-malformed
+        # file would otherwise crash the renderer mid-step and skip the comment entirely — instead
+        # route it to the same "did not complete" notice path below.
+        if [ -s "$REVIEW_JSON" ] && python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$REVIEW_JSON" 2>/dev/null; then
+          echo "present=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "present=false" >> "$GITHUB_OUTPUT"
+        fi
+
     - name: Render HTML report
+      if: ${{ steps.data.outputs.present == 'true' }}
       shell: bash
       env:
         REVIEW_JSON: ${{ inputs.review-json }}
@@ -45,6 +64,7 @@ runs:
 
     - name: Upload report artifact
       id: upload
+      if: ${{ steps.data.outputs.present == 'true' }}
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
       with:
         name: ${{ inputs.artifact-name }}
@@ -53,27 +73,65 @@ runs:
         if-no-files-found: error
         overwrite: true
 
-    - name: Render PR comment
-      if: ${{ inputs.pr-number != '' }}
+    # Success path: render the findings comment from JSON. The marker is a hidden HTML comment
+    # (invisible in the rendered PR but preserved in the stored body) used to find this comment again.
+    - name: Render findings comment
+      if: ${{ inputs.pr-number != '' && steps.data.outputs.present == 'true' }}
       shell: bash
       env:
         REVIEW_JSON: ${{ inputs.review-json }}
         REPORT_TITLE: ${{ inputs.report-title }}
         ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+        MARKER: "<!-- ai-review:${{ inputs.artifact-name }} -->"
       run: |
         python3 "${{ github.action_path }}/render_comment.py" \
           --data "$REVIEW_JSON" \
           --title "$REPORT_TITLE" \
           --artifact-url "$ARTIFACT_URL" \
+          --marker "$MARKER" \
           --out "$RUNNER_TEMP/review-comment.md"
 
-    - name: Post PR comment
+    # Failure path: no JSON was produced — post a notice carrying the same marker so it lands in
+    # (and overwrites) the same sticky comment, never leaving a stale "no issues" comment behind.
+    - name: Render incomplete-review notice
+      if: ${{ inputs.pr-number != '' && steps.data.outputs.present != 'true' }}
+      shell: bash
+      env:
+        REPORT_TITLE: ${{ inputs.report-title }}
+        MARKER: "<!-- ai-review:${{ inputs.artifact-name }} -->"
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        {
+          echo "$MARKER"
+          echo "## 🔍 $REPORT_TITLE"
+          echo ""
+          echo "⚠️ **Review did not complete.** The agent produced no findings file — it likely hit its turn/budget limit or errored before writing results. Nothing is reported for this run; do not read this as \"no issues found\"."
+          echo ""
+          echo "See the [workflow run logs]($RUN_URL) for details, then push a new commit to re-run."
+        } > "$RUNNER_TEMP/review-comment.md"
+
+    # Sticky post: find this review type's existing comment by its marker, then PATCH it in place
+    # (or POST a new one the first time). Scoping by marker — not gh's --edit-last — keeps each
+    # review type's comment independent when several reviewers comment on the same PR.
+    - name: Post or update sticky PR comment
       if: ${{ inputs.pr-number != '' }}
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
         PR_NUMBER: ${{ inputs.pr-number }}
+        MARKER: "<!-- ai-review:${{ inputs.artifact-name }} -->"
+        BODY_FILE: ${{ runner.temp }}/review-comment.md
       run: |
-        gh pr comment "$PR_NUMBER" \
-          --repo "$GITHUB_REPOSITORY" \
-          --body-file "$RUNNER_TEMP/review-comment.md"
+        set -euo pipefail
+        # contains() does a substring match on each comment body; env.MARKER avoids shell-quoting
+        # the marker into the jq program. Take the first id via bash expansion (no head/SIGPIPE).
+        ids=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
+              --jq 'map(select(.body | contains(env.MARKER))) | .[].id')
+        id=${ids%%$'\n'*}
+        if [ -n "$id" ]; then
+          gh api --silent --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@- < "$BODY_FILE"
+          echo "Updated sticky review comment ($id)."
+        else
+          gh api --silent --method POST "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" -F body=@- < "$BODY_FILE"
+          echo "Created sticky review comment."
+        fi
