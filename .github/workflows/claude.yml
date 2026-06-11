@@ -55,8 +55,8 @@ jobs:
           # prompt: 'Update the pull request description to include a summary of changes.'
 
           # Cost guardrails — mention mode executes arbitrary requests from comments and is
-          # otherwise capped only by timeout-minutes. No --bare here: CLAUDE.md context is
-          # useful when answering repo questions interactively.
+          # otherwise capped only by timeout-minutes. No --bare here: it would disable OAuth
+          # (requires ANTHROPIC_API_KEY) and skip CLAUDE.md, which is useful for interactive repo Q&A.
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           claude_args: |
             --max-turns 25
