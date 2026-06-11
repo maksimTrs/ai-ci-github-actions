@@ -84,7 +84,11 @@ jobs:
             Skip purely stylistic nitpicks unless they affect readability significantly.
 
             Post the review as a single sticky PR comment. Keep this PR to one living review
-            comment instead of adding a new one on every push: use
-              gh pr comment ${{ github.event.pull_request.number }} --edit-last --create-if-none --body "<your review>"
-            --edit-last updates your previous review comment if one exists; --create-if-none
-            posts a fresh one the first time.
+            comment instead of adding a new one on every push. Pass the body via --body-file with a
+            single-quoted heredoc (never inline --body) so backticks and $(...) in the review text
+            are not shell-interpolated:
+              gh pr comment ${{ github.event.pull_request.number }} --edit-last --create-if-none --body-file - <<'REVIEW_EOF'
+              ...your review markdown...
+              REVIEW_EOF
+            --edit-last updates your previous review comment if one exists; --create-if-none posts a
+            fresh one the first time.
