@@ -67,6 +67,14 @@ jobs:
 
             Review the changes in this pull request and post a detailed code review comment.
 
+            SCOPE: review ONLY application code (Go backend, Next.js frontend, tests, scripts).
+            This PR may also touch files owned by dedicated reviewers — GitHub Actions workflows and
+            actions (`.github/**`), Dockerfiles / `docker-compose*` / `compose*` / `.dockerignore`,
+            and the `Jenkinsfile`. Those are reviewed by separate specialized jobs; do NOT review or
+            comment on them here, even when they appear in the diff. If the diff contains only such
+            specialist-owned files and no application code, state that there is nothing for this
+            reviewer to do and post no findings.
+
             Focus on:
             - Correctness: logic errors, missing error handling, ignored return values
             - Security: input validation gaps, error message leakage, injection risks
@@ -84,7 +92,11 @@ jobs:
             Skip purely stylistic nitpicks unless they affect readability significantly.
 
             Post the review as a single sticky PR comment. Keep this PR to one living review
-            comment instead of adding a new one on every push: use
-              gh pr comment ${{ github.event.pull_request.number }} --edit-last --create-if-none --body "<your review>"
-            --edit-last updates your previous review comment if one exists; --create-if-none
-            posts a fresh one the first time.
+            comment instead of adding a new one on every push. Pass the body via --body-file with a
+            single-quoted heredoc (never inline --body) so backticks and $(...) in the review text
+            are not shell-interpolated:
+              gh pr comment ${{ github.event.pull_request.number }} --edit-last --create-if-none --body-file - <<'REVIEW_EOF'
+              ...your review markdown...
+              REVIEW_EOF
+            --edit-last updates your previous review comment if one exists; --create-if-none posts a
+            fresh one the first time.

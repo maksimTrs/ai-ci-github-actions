@@ -24,6 +24,22 @@ def location(finding: dict) -> str:
     return ""
 
 
+def location_cell(finding: dict) -> str:
+    """Bare location for a table cell: `file:line` / `file` / line N / em dash when absent."""
+    file = finding.get("file")
+    line = finding.get("line")
+    if file:
+        return f"`{file}:{line}`" if line else f"`{file}`"
+    if line:
+        return f"line {line}"
+    return "—"
+
+
+def table_cell(text: str) -> str:
+    """Escape pipes and flatten newlines so free text cannot break a Markdown table row."""
+    return str(text).replace("|", "\\|").replace("\n", " ").strip()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data", required=True, help="Path to review-data.json")
@@ -80,6 +96,18 @@ def main() -> None:
                 if finding.get("fix"):
                     lines += [f"**Fix:** {finding['fix']}", ""]
             lines += ["</details>", ""]
+
+        # One-line-per-finding index for quick scanning, ordered critical → low. Complements
+        # (does not replace) the count table above and the collapsible detail blocks.
+        lines += ["**Findings index**", ""]
+        lines += ["| Severity | Location | Finding |", "|---|---|---|"]
+        for sev in SEVERITIES:
+            for finding in (f for f in findings if f.get("severity") == sev):
+                lines.append(
+                    f"| {BADGES[sev]} {sev.capitalize()} "
+                    f"| {location_cell(finding)} | {table_cell(finding.get('title', 'Untitled'))} |"
+                )
+        lines.append("")
 
     if args.artifact_url:
         lines += [

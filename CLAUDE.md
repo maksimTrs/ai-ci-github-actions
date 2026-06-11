@@ -62,6 +62,7 @@ When writing or reviewing pipeline code, **proactively** flag non-obvious behavi
 - Default `timeout-minutes` is **6 hours** — a hung step burns runner minutes silently
 - `cancel-in-progress: true` on `main` push cancels deploys mid-flight on rapid pushes
 - `claude-code-action` in automated `pull_request` mode passes green with no output when: (a) `pull-requests: write` / `issues: write` missing — job exits 0, API write rejected silently; (b) `Bash` not in `claude_args` allowlist — `permission_denials_count` > 0 in execution JSON but no error raised. Mention-mode (`@claude`, `issue_comment` trigger) uses the OAuth token for writes and does NOT need `GITHUB_TOKEN` write access — so `claude.yml` working doesn't mean `claude-code-review.yml` will work with the same permissions.
+- `--bare` in `claude_args` disables OAuth auth (it requires `ANTHROPIC_API_KEY` or an `apiKeyHelper`, and skips auto-discovery of `CLAUDE.md`/hooks/MCP). A workflow that authenticates via `claude_code_oauth_token` / `CLAUDE_CODE_OAUTH_TOKEN` plus `--bare` fails at runtime with `Not logged in · Please run /login` — the token is silently ignored. Use `--bare` only with API-key auth; on OAuth, rely on `--append-system-prompt` + tool allowlists for prompt-injection defense instead.
 
 **Jenkins traps:**
 - CPS transformation — closures across `node {}` boundaries get serialized; non-`@NonCPS` `.collect {}` may fail with `NotSerializableException`. Prefer `for (item in items)` in pipelines, mark heavy logic `@NonCPS`.
