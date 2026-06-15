@@ -91,6 +91,12 @@ jobs:
             Be specific — reference file paths and line numbers.
             Skip purely stylistic nitpicks unless they affect readability significantly.
 
+            Output format: each run must fully REPLACE the previous comment with a complete,
+            self-contained review of the CURRENT diff (never append to the prior text), and END
+            with a "## Summary" Markdown table grouping findings by severity
+            (Critical / High / Medium / Low) with file:line and a one-line description per row —
+            write a single "No findings" row when there are none.
+
             Post the review as a single sticky PR comment. Keep this PR to one living review
             comment instead of adding a new one on every push. Pass the body via --body-file with a
             single-quoted heredoc (never inline --body) so backticks and $(...) in the review text
