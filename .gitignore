@@ -35,6 +35,10 @@ node_modules/
 dist/
 build/
 
+# Python (composite action helper scripts: render_report.py / render_comment.py)
+__pycache__/
+*.py[cod]
+
 # Process files
 backend.pid
 frontend.pid
