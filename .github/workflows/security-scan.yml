@@ -2,9 +2,13 @@ name: Security — Trivy Scan
 
 # Dedicated security workflow (NOT a job in ci.yml). ci.yml ignores Dockerfile/
 # compose changes by design; a vulnerability scan must run ON those changes, so it
-# lives here with its own triggers. Filesystem scan covers Go + npm dependencies
-# (go.sum, package-lock.json), IaC misconfig (Dockerfiles, compose), and secrets —
-# without building images. Image-layer scanning is a separate, heavier concern.
+# lives here with its own triggers. Two independent jobs:
+#   - trivy-fs:    Go + npm dependencies (go.sum, package-lock.json), IaC misconfig
+#                  (Dockerfiles, compose) and secrets — static, no build.
+#   - trivy-image: CVEs in the OS packages / layers of the BUILT images — the layer
+#                  static fs analysis can't see. Builds each app image, then scans it.
+# Both are report-only (exit-code 0): findings surface in the Code scanning tab and
+# (for trivy-fs) a PR comment, but never fail the build.
 on:
   push:
     branches: [main]
@@ -125,3 +129,55 @@ jobs:
             gh api --silent --method POST "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" -F body=@- < "$BODY"
             echo "Created sticky Trivy comment."
           fi
+
+  # Builds each application/test image, then scans its layers for OS-package + library
+  # CVEs — the dimension trivy-fs (static, no build) cannot see. One matrix shard per
+  # image so they build and scan in parallel and surface as independent PR checks.
+  trivy-image:
+    name: Trivy image scan (${{ matrix.image.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      # Don't abort the other images when one shard finds CVEs — see the full picture.
+      fail-fast: false
+      matrix:
+        image:
+          - { name: backend,  context: bugtracker-backend }
+          - { name: frontend, context: bugtracker-frontend }
+          - { name: e2e,      context: tests-e2e }
+    permissions:
+      contents: read
+      security-events: write  # required to publish SARIF to the Code scanning tab
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          fetch-depth: 1
+
+      # Plain build from the image's own context — none of these need build-args
+      # (compose passes NEXT_PUBLIC_API_URL as a runtime env, not a build-arg).
+      - name: Build image
+        run: docker build -t "local/${{ matrix.image.name }}:scan" "${{ matrix.image.context }}"
+
+      # report-only: ignore-unfixed drops base-image CVEs with no upstream patch (noise you
+      # can't action), HIGH,CRITICAL keeps the tab to actionable signal. exit-code 0 never
+      # fails the build. Flip to exit-code '1' to make a failed image scan a hard gate.
+      - name: Trivy image scan (SARIF, report-only)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          scan-type: image
+          image-ref: local/${{ matrix.image.name }}:scan
+          format: sarif
+          output: trivy-image-${{ matrix.image.name }}.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '0'
+
+      # category MUST be unique per image — without it, each matrix shard's upload
+      # overwrites the previous one and the tab shows only the last image scanned.
+      - name: Upload SARIF to Code scanning
+        if: ${{ !cancelled() }}
+        uses: github/codeql-action/upload-sarif@c35d1b164463ee62a100735382aaaa525c5d3496  # codeql-bundle-v2.25.6
+        with:
+          sarif_file: trivy-image-${{ matrix.image.name }}.sarif
+          category: trivy-image-${{ matrix.image.name }}
