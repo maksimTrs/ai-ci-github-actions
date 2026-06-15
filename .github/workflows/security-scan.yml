@@ -181,3 +181,99 @@ jobs:
         with:
           sarif_file: trivy-image-${{ matrix.image.name }}.sarif
           category: trivy-image-${{ matrix.image.name }}
+
+      # Human-readable table for the aggregated PR comment (assembled by trivy-image-comment).
+      # Same filters as the SARIF above; this 2nd run reuses the built image + cached DB, so cheap.
+      - name: Trivy image scan (table for comment)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          scan-type: image
+          image-ref: local/${{ matrix.image.name }}:scan
+          format: table
+          output: trivy-image-${{ matrix.image.name }}.txt
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '0'
+
+      # Hand the per-image table to the aggregation job. Distinct artifact + filename per
+      # image so the merge-multiple download lands all three side by side without collision.
+      - name: Upload findings table
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: trivy-image-table-${{ matrix.image.name }}
+          path: trivy-image-${{ matrix.image.name }}.txt
+          retention-days: 7
+          if-no-files-found: error
+
+  # Aggregates the per-image findings tables (matrix artifacts) into ONE sticky PR comment,
+  # matching the one-sticky-per-concern pattern of the other reviewers. needs: trivy-image
+  # waits for every matrix shard; same marker-based PATCH/POST as trivy-fs / publish-review-report.
+  trivy-image-comment:
+    name: Trivy image findings comment
+    needs: trivy-image
+    if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write    # required to create the PR comment
+      issues: write           # PR comments are created via the Issues API endpoint
+    steps:
+      # merge-multiple flattens every trivy-image-table-* artifact into one dir. Filenames
+      # carry the image name, so the three tables coexist as tables/trivy-image-<name>.txt.
+      - name: Download findings tables
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          pattern: trivy-image-table-*
+          path: tables
+          merge-multiple: true
+
+      - name: Post or update sticky image-scan comment
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          MARKER: '<!-- security-scan:trivy-image -->'
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SECURITY_URL: ${{ github.server_url }}/${{ github.repository }}/security/code-scanning?query=tool%3ATrivy
+        run: |
+          set -euo pipefail
+          shopt -s nullglob   # empty glob expands to nothing, not the literal pattern
+          BODY="$RUNNER_TEMP/trivy-image-comment.md"
+          {
+            echo "$MARKER"
+            echo "## 🛡️ Trivy Image Scan"
+            echo ""
+            echo "Fixable **HIGH/CRITICAL** CVEs in built image layers (report-only — not blocking merge):"
+            echo ""
+            # One section per image: collapsible table when it has findings, one-liner when clean.
+            for f in tables/trivy-image-*.txt; do
+              name=$(basename "$f" .txt); name=${name#trivy-image-}
+              if [ -s "$f" ] && grep -q 'Total:' "$f"; then
+                echo "<details><summary><b>$name</b> — ⚠️ findings</summary>"
+                echo ""
+                echo '```'
+                cat "$f"
+                echo '```'
+                echo ""
+                echo "</details>"
+              else
+                echo "- **$name** — ✅ no fixable HIGH/CRITICAL"
+              fi
+              echo ""
+            done
+            echo "Full inventory (all severities + misconfig): **[Security → Code scanning]($SECURITY_URL)** · [workflow run]($RUN_URL)"
+          } > "$BODY"
+
+          # Find this comment by its hidden marker (substring match), then PATCH it; POST first time.
+          ids=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
+                --jq 'map(select(.body | contains(env.MARKER))) | .[].id')
+          id=${ids%%$'\n'*}
+          if [ -n "$id" ]; then
+            gh api --silent --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@- < "$BODY"
+            echo "Updated sticky image-scan comment ($id)."
+          else
+            gh api --silent --method POST "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" -F body=@- < "$BODY"
+            echo "Created sticky image-scan comment."
+          fi
