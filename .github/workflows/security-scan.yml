@@ -18,7 +18,8 @@ on:
       - '**/*.md'
   workflow_dispatch:
 
-# Default-deny. The SARIF upload needs security-events:write — granted per-job.
+# Default-deny. The job below widens it: security-events:write to publish SARIF,
+# and pull-requests/issues:write to post the sticky findings comment.
 permissions:
   contents: read
 
@@ -34,6 +35,8 @@ jobs:
     permissions:
       contents: read
       security-events: write  # required to publish SARIF to the Code scanning tab
+      pull-requests: write    # required to create the PR comment
+      issues: write           # PR comments are created via the Issues API endpoint
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
@@ -59,16 +62,66 @@ jobs:
         with:
           sarif_file: trivy-results.sarif
 
-      # Pass 2 — the gate. Reuses Trivy's local DB cache from pass 1 (same runner),
-      # so no second DB download. Blocks the build only on fixable HIGH/CRITICAL
-      # vulns or leaked secrets; misconfig stays report-only (see pass 1).
-      - name: Trivy scan (gate — fail on fixable HIGH/CRITICAL)
+      # Pass 2 — fixable HIGH/CRITICAL summary, report-only. Reuses Trivy's local DB
+      # cache from pass 1 (same runner), so no second DB download. Writes the table to
+      # a file for the PR comment below. exit-code 0: findings are surfaced (comment +
+      # Code scanning) but never fail the build — the app code is a CI showcase target,
+      # not a shipped artifact. Flip exit-code to '1' to turn this into a hard gate.
+      # misconfig stays out of this pass (see pass 1).
+      - name: Trivy scan (findings table — report-only)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         with:
           scan-type: fs
           scan-ref: .
           scanners: vuln,secret
           format: table
+          output: trivy-table.txt
           severity: CRITICAL,HIGH
           ignore-unfixed: true
-          exit-code: '1'
+          exit-code: '0'
+
+      # Sticky PR comment — same marker-based PATCH/POST pattern as publish-review-report,
+      # so it updates in place on re-runs and stays independent of the AI-review comments.
+      # !cancelled() so it posts even if an earlier step failed unexpectedly. Skipped on
+      # push/workflow_dispatch (no PR to comment on).
+      - name: Post or update sticky Trivy PR comment
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          MARKER: '<!-- security-scan:trivy-fs -->'
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SECURITY_URL: ${{ github.server_url }}/${{ github.repository }}/security/code-scanning?query=tool%3ATrivy
+        run: |
+          set -euo pipefail
+          BODY="$RUNNER_TEMP/trivy-comment.md"
+          {
+            echo "$MARKER"
+            echo "## 🛡️ Trivy Security Scan"
+            echo ""
+            # "Total:" appears once per target that has findings.
+            if [ -s trivy-table.txt ] && grep -q 'Total:' trivy-table.txt; then
+              echo "⚠️ Fixable **HIGH/CRITICAL** vulnerabilities or leaked secrets found (report-only — not blocking merge):"
+              echo ""
+              echo '```'
+              cat trivy-table.txt
+              echo '```'
+            else
+              echo "✅ No fixable HIGH/CRITICAL vulnerabilities or leaked secrets."
+            fi
+            echo ""
+            echo "Full inventory (misconfig + lower severities): **[Security → Code scanning]($SECURITY_URL)** · [workflow run]($RUN_URL)"
+          } > "$BODY"
+
+          # Find this comment by its hidden marker (substring match), then PATCH it; POST first time.
+          ids=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
+                --jq 'map(select(.body | contains(env.MARKER))) | .[].id')
+          id=${ids%%$'\n'*}
+          if [ -n "$id" ]; then
+            gh api --silent --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@- < "$BODY"
+            echo "Updated sticky Trivy comment ($id)."
+          else
+            gh api --silent --method POST "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" -F body=@- < "$BODY"
+            echo "Created sticky Trivy comment."
+          fi
