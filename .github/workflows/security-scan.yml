@@ -1,0 +1,74 @@
+name: Security — Trivy Scan
+
+# Dedicated security workflow (NOT a job in ci.yml). ci.yml ignores Dockerfile/
+# compose changes by design; a vulnerability scan must run ON those changes, so it
+# lives here with its own triggers. Filesystem scan covers Go + npm dependencies
+# (go.sum, package-lock.json), IaC misconfig (Dockerfiles, compose), and secrets —
+# without building images. Image-layer scanning is a separate, heavier concern.
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+  workflow_dispatch:
+
+# Default-deny. The SARIF upload needs security-events:write — granted per-job.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  trivy-fs:
+    name: Trivy filesystem scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: write  # required to publish SARIF to the Code scanning tab
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          fetch-depth: 1
+
+      # Pass 1 — full inventory for the Code scanning tab. exit-code 0 so the SARIF
+      # always uploads; no severity filter so the tab shows the complete picture,
+      # including misconfig (opinionated IaC lint kept out of the gate below).
+      - name: Trivy scan (SARIF, report-only)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          format: sarif
+          output: trivy-results.sarif
+          exit-code: '0'
+
+      - name: Upload SARIF to Code scanning
+        if: ${{ !cancelled() }}
+        uses: github/codeql-action/upload-sarif@c35d1b164463ee62a100735382aaaa525c5d3496  # codeql-bundle-v2.25.6
+        with:
+          sarif_file: trivy-results.sarif
+
+      # Pass 2 — the gate. Reuses Trivy's local DB cache from pass 1 (same runner),
+      # so no second DB download. Blocks the build only on fixable HIGH/CRITICAL
+      # vulns or leaked secrets; misconfig stays report-only (see pass 1).
+      - name: Trivy scan (gate — fail on fixable HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
