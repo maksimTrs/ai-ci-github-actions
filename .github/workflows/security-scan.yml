@@ -118,15 +118,28 @@ jobs:
             echo "Full inventory (misconfig + lower severities): **[Security → Code scanning]($SECURITY_URL)** · [workflow run]($RUN_URL)"
           } > "$BODY"
 
+          # GitHub rejects comment bodies over 65536 chars with HTTP 422. Large Trivy
+          # tables can exceed that, so cap the body under the limit and point to the full
+          # report. Budget leaves headroom for the truncation notice and multi-byte chars
+          # (emoji count as >1).
+          MAX=60000
+          if [ "$(wc -c < "$BODY")" -gt "$MAX" ]; then
+            head -c "$MAX" "$BODY" > "$BODY.tmp" && mv "$BODY.tmp" "$BODY"
+            # head -c is byte-based and may cut inside a ``` fence; close it if unbalanced.
+            fences=$(grep -c '^```' "$BODY" || true)
+            if [ $((fences % 2)) -ne 0 ]; then echo '```' >> "$BODY"; fi
+            printf '\n> ⚠️ Output truncated — full tables in the [workflow run](%s) artifacts and the Code scanning tab.\n' "$RUN_URL" >> "$BODY"
+          fi
+
           # Find this comment by its hidden marker (substring match), then PATCH it; POST first time.
           ids=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
                 --jq 'map(select(.body | contains(env.MARKER))) | .[].id')
           id=${ids%%$'\n'*}
           if [ -n "$id" ]; then
-            gh api --silent --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@- < "$BODY"
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@- < "$BODY"
             echo "Updated sticky Trivy comment ($id)."
           else
-            gh api --silent --method POST "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" -F body=@- < "$BODY"
+            gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" -F body=@- < "$BODY"
             echo "Created sticky Trivy comment."
           fi
 
@@ -266,14 +279,27 @@ jobs:
             echo "Full inventory (all severities + misconfig): **[Security → Code scanning]($SECURITY_URL)** · [workflow run]($RUN_URL)"
           } > "$BODY"
 
+          # GitHub rejects comment bodies over 65536 chars with HTTP 422. Large Trivy
+          # tables can exceed that, so cap the body under the limit and point to the full
+          # report. Budget leaves headroom for the truncation notice and multi-byte chars
+          # (emoji count as >1).
+          MAX=60000
+          if [ "$(wc -c < "$BODY")" -gt "$MAX" ]; then
+            head -c "$MAX" "$BODY" > "$BODY.tmp" && mv "$BODY.tmp" "$BODY"
+            # head -c is byte-based and may cut inside a ``` fence; close it if unbalanced.
+            fences=$(grep -c '^```' "$BODY" || true)
+            if [ $((fences % 2)) -ne 0 ]; then echo '```' >> "$BODY"; fi
+            printf '\n> ⚠️ Output truncated — full tables in the [workflow run](%s) artifacts and the Code scanning tab.\n' "$RUN_URL" >> "$BODY"
+          fi
+
           # Find this comment by its hidden marker (substring match), then PATCH it; POST first time.
           ids=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
                 --jq 'map(select(.body | contains(env.MARKER))) | .[].id')
           id=${ids%%$'\n'*}
           if [ -n "$id" ]; then
-            gh api --silent --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@- < "$BODY"
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@- < "$BODY"
             echo "Updated sticky image-scan comment ($id)."
           else
-            gh api --silent --method POST "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" -F body=@- < "$BODY"
+            gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" -F body=@- < "$BODY"
             echo "Created sticky image-scan comment."
           fi
