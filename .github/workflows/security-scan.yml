@@ -195,27 +195,30 @@ jobs:
           sarif_file: trivy-image-${{ matrix.image.name }}.sarif
           category: trivy-image-${{ matrix.image.name }}
 
-      # Human-readable table for the aggregated PR comment (assembled by trivy-image-comment).
+      # Machine-readable JSON for the aggregated PR comment (parsed by trivy-image-comment via jq).
+      # `format: table` would emit Trivy's full "Report Summary" listing every scanned target
+      # (hundreds of clean node_modules entries) — noise that buries the findings AND blows past
+      # the 65 KB comment limit. JSON lets the aggregator extract ONLY the vulnerabilities.
       # Same filters as the SARIF above; this 2nd run reuses the built image + cached DB, so cheap.
-      - name: Trivy image scan (table for comment)
+      - name: Trivy image scan (JSON for comment)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         with:
           scan-type: image
           image-ref: local/${{ matrix.image.name }}:scan
-          format: table
-          output: trivy-image-${{ matrix.image.name }}.txt
+          format: json
+          output: trivy-image-${{ matrix.image.name }}.json
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: '0'
 
-      # Hand the per-image table to the aggregation job. Distinct artifact + filename per
+      # Hand the per-image findings JSON to the aggregation job. Distinct artifact + filename per
       # image so the merge-multiple download lands all three side by side without collision.
-      - name: Upload findings table
+      - name: Upload findings JSON
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
-          name: trivy-image-table-${{ matrix.image.name }}
-          path: trivy-image-${{ matrix.image.name }}.txt
+          name: trivy-image-findings-${{ matrix.image.name }}
+          path: trivy-image-${{ matrix.image.name }}.json
           retention-days: 7
           if-no-files-found: error
 
@@ -233,13 +236,13 @@ jobs:
       pull-requests: write    # required to create the PR comment
       issues: write           # PR comments are created via the Issues API endpoint
     steps:
-      # merge-multiple flattens every trivy-image-table-* artifact into one dir. Filenames
-      # carry the image name, so the three tables coexist as tables/trivy-image-<name>.txt.
-      - name: Download findings tables
+      # merge-multiple flattens every trivy-image-findings-* artifact into one dir. Filenames
+      # carry the image name, so the three JSONs coexist as findings/trivy-image-<name>.json.
+      - name: Download findings JSON
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
         with:
-          pattern: trivy-image-table-*
-          path: tables
+          pattern: trivy-image-findings-*
+          path: findings
           merge-multiple: true
 
       - name: Post or update sticky image-scan comment
@@ -253,42 +256,70 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob   # empty glob expands to nothing, not the literal pattern
+
+          # Build a headline ("backend ✅ 0 · frontend ⚠️ 11 · …") plus one collapsible Markdown
+          # table per image from each image's findings JSON. Extracting only .Vulnerabilities[]
+          # drops Trivy's full target inventory — the comment carries findings, not the hundreds of
+          # clean targets the table format lists. `seen` distinguishes "scanned, all clean" from
+          # "no results at all" so a failed upstream scan is never reported as ✅ clean.
+          headline=""
+          details=""
+          seen=0
+          for f in findings/trivy-image-*.json; do
+            [ -s "$f" ] || continue
+            seen=1
+            name=$(basename "$f" .json); name=${name#trivy-image-}
+
+            # Flatten + dedup vulnerabilities across all targets in this image. A package/CVE can
+            # repeat across nested node_modules copies; unique_by collapses those to one row.
+            vulns=$(jq -c '
+              [ .Results[]?.Vulnerabilities[]?
+                | { pkg: .PkgName, id: .VulnerabilityID, sev: .Severity,
+                    inst: .InstalledVersion, fix: .FixedVersion, url: .PrimaryURL } ]
+              | unique_by([.pkg, .id, .inst])' "$f")
+            count=$(printf '%s' "$vulns" | jq 'length')
+
+            if [ "$count" -gt 0 ]; then
+              headline="${headline:+$headline · }$name ⚠️ $count"
+              # sort_by(.sev, .pkg): "CRITICAL" < "HIGH" alphabetically, so criticals lead.
+              rows=$(printf '%s' "$vulns" | jq -r '
+                sort_by(.sev, .pkg)[]
+                | "| \(.pkg) | [\(.id)](\(.url // "")) | "
+                  + (if .sev == "CRITICAL" then "🔴 CRIT" else "🟠 HIGH" end)
+                  + " | \(.inst) | \(.fix // "—") |"')
+              details+=$'\n'"<details open><summary><b>$name</b> — $count HIGH/CRITICAL</summary>"$'\n\n'
+              details+="| Package | CVE | Sev | Installed | Fixed |"$'\n'
+              details+="|---|---|---|---|---|"$'\n'
+              details+="$rows"$'\n\n'"</details>"$'\n'
+            else
+              headline="${headline:+$headline · }$name ✅ 0"
+            fi
+          done
+
           BODY="$RUNNER_TEMP/trivy-image-comment.md"
           {
             echo "$MARKER"
             echo "## 🛡️ Trivy Image Scan"
             echo ""
-            echo "Fixable **HIGH/CRITICAL** CVEs in built image layers (report-only — not blocking merge):"
+            if [ "$seen" -eq 0 ]; then
+              echo "⚠️ **No image-scan results found** — the scan may not have completed. Do not read this as \"no issues\"; check the [workflow run]($RUN_URL)."
+            elif [ -n "$details" ]; then
+              echo "Fixable **HIGH/CRITICAL** CVEs in built image layers (report-only — not blocking merge):"
+            else
+              echo "✅ No fixable HIGH/CRITICAL CVEs in built image layers."
+            fi
             echo ""
-            # One section per image: collapsible table when it has findings, one-liner when clean.
-            for f in tables/trivy-image-*.txt; do
-              name=$(basename "$f" .txt); name=${name#trivy-image-}
-              if [ -s "$f" ] && grep -q 'Total:' "$f"; then
-                echo "<details><summary><b>$name</b> — ⚠️ findings</summary>"
-                echo ""
-                echo '```'
-                cat "$f"
-                echo '```'
-                echo ""
-                echo "</details>"
-              else
-                echo "- **$name** — ✅ no fixable HIGH/CRITICAL"
-              fi
-              echo ""
-            done
+            [ -n "$headline" ] && { echo "$headline"; echo ""; }
+            [ -n "$details" ] && printf '%s\n' "$details"
             echo "Full inventory (all severities + misconfig): **[Security → Code scanning]($SECURITY_URL)** · [workflow run]($RUN_URL)"
           } > "$BODY"
 
-          # GitHub rejects comment bodies over 65536 chars with HTTP 422. Large Trivy
-          # tables can exceed that, so cap the body under the limit and point to the full
-          # report. Budget leaves headroom for the truncation notice and multi-byte chars
-          # (emoji count as >1).
+          # Backstop only: option-A output is compact native Markdown and should stay well under
+          # GitHub's 65536-char comment limit, but keep the guard so a pathological finding count
+          # can never 422 the POST. (No ``` fences here, so no fence-rebalancing needed.)
           MAX=60000
           if [ "$(wc -c < "$BODY")" -gt "$MAX" ]; then
             head -c "$MAX" "$BODY" > "$BODY.tmp" && mv "$BODY.tmp" "$BODY"
-            # head -c is byte-based and may cut inside a ``` fence; close it if unbalanced.
-            fences=$(grep -c '^```' "$BODY" || true)
-            if [ $((fences % 2)) -ne 0 ]; then echo '```' >> "$BODY"; fi
             printf '\n> ⚠️ Output truncated — full tables in the [workflow run](%s) artifacts and the Code scanning tab.\n' "$RUN_URL" >> "$BODY"
           fi
 
