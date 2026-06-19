@@ -1,0 +1,3 @@
+# Shell scripts run on Linux CI runners — force LF so a CRLF checkout (Windows
+# core.autocrlf=true) never breaks the shebang or the bash parser ($'\r' errors).
+*.sh text eol=lf
