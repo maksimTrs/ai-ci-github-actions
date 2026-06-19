@@ -46,6 +46,9 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         with:
           fetch-depth: 1
+          # No git ops here need auth (Trivy reads files as data; SARIF upload uses the API token).
+          # Drop the token from .git/config so the PR-head render script has no credential to read.
+          persist-credentials: false
 
       # Pass 1 — full inventory for the Code scanning tab. exit-code 0 so the SARIF
       # always uploads; no severity filter so the tab shows the complete picture,
@@ -66,28 +69,43 @@ jobs:
         with:
           sarif_file: trivy-results.sarif
 
-      # Pass 2 — fixable HIGH/CRITICAL summary, report-only. Reuses Trivy's local DB
-      # cache from pass 1 (same runner), so no second DB download. Writes the table to
-      # a file for the PR comment below. exit-code 0: findings are surfaced (comment +
-      # Code scanning) but never fail the build — the app code is a CI showcase target,
-      # not a shipped artifact. Flip exit-code to '1' to turn this into a hard gate.
-      # misconfig stays out of this pass (see pass 1).
-      - name: Trivy scan (findings table — report-only)
+      # Pass 2 — fixable HIGH/CRITICAL findings, report-only. Reuses Trivy's local DB cache from
+      # pass 1 (same runner), so no second DB download. JSON (not table): the aggregator extracts
+      # only .Vulnerabilities[]/.Secrets[], dropping the full "Report Summary" + VEX-notice noise
+      # that table format bakes in. exit-code 0: findings are surfaced (comment + Code scanning)
+      # but never fail the build — the app code is a CI showcase target, not a shipped artifact.
+      # Flip exit-code to '1' to turn this into a hard gate. misconfig stays out of this pass (see pass 1).
+      - name: Trivy scan (findings JSON — report-only)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         with:
           scan-type: fs
           scan-ref: .
           scanners: vuln,secret
-          format: table
-          output: trivy-table.txt
+          format: json
+          output: trivy-fs.json
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: '0'
 
-      # Sticky PR comment — same marker-based PATCH/POST pattern as publish-review-report,
-      # so it updates in place on re-runs and stays independent of the AI-review comments.
-      # !cancelled() so it posts even if an earlier step failed unexpectedly. Skipped on
-      # push/workflow_dispatch (no PR to comment on).
+      # Pure transformation: scan JSON -> Markdown body. Carries NO token and makes NO API calls,
+      # so it is safe to run from the checked-out (PR-head) script — the credential never enters
+      # this step. Extracting it (vs. inline) makes it shellcheck-able and locally runnable.
+      - name: Render fs-scan comment body
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        shell: bash
+        env:
+          FINDINGS_JSON: trivy-fs.json
+          OUT: ${{ runner.temp }}/trivy-fs-comment.md
+          MARKER: '<!-- security-scan:trivy-fs -->'
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SECURITY_URL: ${{ github.server_url }}/${{ github.repository }}/security/code-scanning?query=tool%3ATrivy
+        run: bash .github/scripts/render-trivy-fs-comment.sh
+
+      # Sticky PR comment — same marker-based PATCH/POST pattern as publish-review-report, so it
+      # updates in place on re-runs and stays independent of the AI-review comments. This is the
+      # ONLY step holding the write token; its logic stays inline so on pull_request it is taken
+      # from the base branch — a PR cannot alter how or where it posts. !cancelled() so it posts
+      # even if an earlier step failed; skipped on push/workflow_dispatch (no PR to comment on).
       - name: Post or update sticky Trivy PR comment
         if: ${{ !cancelled() && github.event_name == 'pull_request' }}
         shell: bash
@@ -95,51 +113,18 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           MARKER: '<!-- security-scan:trivy-fs -->'
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          SECURITY_URL: ${{ github.server_url }}/${{ github.repository }}/security/code-scanning?query=tool%3ATrivy
+          BODY_FILE: ${{ runner.temp }}/trivy-fs-comment.md
         run: |
           set -euo pipefail
-          BODY="$RUNNER_TEMP/trivy-comment.md"
-          {
-            echo "$MARKER"
-            echo "## 🛡️ Trivy Security Scan"
-            echo ""
-            # "Total:" appears once per target that has findings.
-            if [ -s trivy-table.txt ] && grep -q 'Total:' trivy-table.txt; then
-              echo "⚠️ Fixable **HIGH/CRITICAL** vulnerabilities or leaked secrets found (report-only — not blocking merge):"
-              echo ""
-              echo '```'
-              cat trivy-table.txt
-              echo '```'
-            else
-              echo "✅ No fixable HIGH/CRITICAL vulnerabilities or leaked secrets."
-            fi
-            echo ""
-            echo "Full inventory (misconfig + lower severities): **[Security → Code scanning]($SECURITY_URL)** · [workflow run]($RUN_URL)"
-          } > "$BODY"
-
-          # GitHub rejects comment bodies over 65536 chars with HTTP 422. Large Trivy
-          # tables can exceed that, so cap the body under the limit and point to the full
-          # report. Budget leaves headroom for the truncation notice and multi-byte chars
-          # (emoji count as >1).
-          MAX=60000
-          if [ "$(wc -c < "$BODY")" -gt "$MAX" ]; then
-            head -c "$MAX" "$BODY" > "$BODY.tmp" && mv "$BODY.tmp" "$BODY"
-            # head -c is byte-based and may cut inside a ``` fence; close it if unbalanced.
-            fences=$(grep -c '^```' "$BODY" || true)
-            if [ $((fences % 2)) -ne 0 ]; then echo '```' >> "$BODY"; fi
-            printf '\n> ⚠️ Output truncated — full tables in the [workflow run](%s) artifacts and the Code scanning tab.\n' "$RUN_URL" >> "$BODY"
-          fi
-
           # Find this comment by its hidden marker (substring match), then PATCH it; POST first time.
           ids=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
                 --jq 'map(select(.body | contains(env.MARKER))) | .[].id')
           id=${ids%%$'\n'*}
           if [ -n "$id" ]; then
-            gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@- < "$BODY"
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@- < "$BODY_FILE"
             echo "Updated sticky Trivy comment ($id)."
           else
-            gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" -F body=@- < "$BODY"
+            gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" -F body=@- < "$BODY_FILE"
             echo "Created sticky Trivy comment."
           fi
 
@@ -236,6 +221,18 @@ jobs:
       pull-requests: write    # required to create the PR comment
       issues: write           # PR comments are created via the Issues API endpoint
     steps:
+      # Checkout BEFORE downloading artifacts: actions/checkout cleans the workspace, which would
+      # wipe the downloaded findings/. sparse-checkout pulls essentially only .github/scripts, so
+      # the minimum of PR-head code is materialized (this job runs on the pull_request head).
+      - name: Checkout scripts
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          fetch-depth: 1
+          sparse-checkout: .github/scripts
+          # No git ops need auth here — drop the token from .git/config so the PR-head render
+          # script (next step) has no credential to read. Keeps the write token to the post step.
+          persist-credentials: false
+
       # merge-multiple flattens every trivy-image-findings-* artifact into one dir. Filenames
       # carry the image name, so the three JSONs coexist as findings/trivy-image-<name>.json.
       - name: Download findings JSON
@@ -245,92 +242,38 @@ jobs:
           path: findings
           merge-multiple: true
 
+      # Pure transformation: findings JSON -> Markdown body. Carries NO token and makes NO API
+      # calls, so it is safe to run from the checked-out (PR-head) script — the credential never
+      # enters this step. Extracting it (vs. inline) makes it shellcheck-able and locally runnable.
+      - name: Render image-scan comment body
+        shell: bash
+        env:
+          FINDINGS_DIR: findings
+          OUT: ${{ runner.temp }}/trivy-image-comment.md
+          MARKER: '<!-- security-scan:trivy-image -->'
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SECURITY_URL: ${{ github.server_url }}/${{ github.repository }}/security/code-scanning?query=tool%3ATrivy
+        run: bash .github/scripts/render-trivy-image-comment.sh
+
+      # Sensitive half: the ONLY step holding the write token. Its logic stays inline so on
+      # pull_request it is taken from the base branch — a PR cannot alter how or where it posts.
       - name: Post or update sticky image-scan comment
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           MARKER: '<!-- security-scan:trivy-image -->'
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          SECURITY_URL: ${{ github.server_url }}/${{ github.repository }}/security/code-scanning?query=tool%3ATrivy
+          BODY_FILE: ${{ runner.temp }}/trivy-image-comment.md
         run: |
           set -euo pipefail
-          shopt -s nullglob   # empty glob expands to nothing, not the literal pattern
-
-          # Build a headline ("backend ✅ 0 · frontend ⚠️ 11 · …") plus one collapsible Markdown
-          # table per image from each image's findings JSON. Extracting only .Vulnerabilities[]
-          # drops Trivy's full target inventory — the comment carries findings, not the hundreds of
-          # clean targets the table format lists. `seen` distinguishes "scanned, all clean" from
-          # "no results at all" so a failed upstream scan is never reported as ✅ clean.
-          headline=""
-          details=""
-          seen=0
-          for f in findings/trivy-image-*.json; do
-            [ -s "$f" ] || continue
-            seen=1
-            name=$(basename "$f" .json); name=${name#trivy-image-}
-
-            # Flatten + dedup vulnerabilities across all targets in this image. A package/CVE can
-            # repeat across nested node_modules copies; unique_by collapses those to one row.
-            vulns=$(jq -c '
-              [ .Results[]?.Vulnerabilities[]?
-                | { pkg: .PkgName, id: .VulnerabilityID, sev: .Severity,
-                    inst: .InstalledVersion, fix: .FixedVersion, url: .PrimaryURL } ]
-              | unique_by([.pkg, .id, .inst])' "$f")
-            count=$(printf '%s' "$vulns" | jq 'length')
-
-            if [ "$count" -gt 0 ]; then
-              headline="${headline:+$headline · }$name ⚠️ $count"
-              # sort_by(.sev, .pkg): "CRITICAL" < "HIGH" alphabetically, so criticals lead.
-              rows=$(printf '%s' "$vulns" | jq -r '
-                sort_by(.sev, .pkg)[]
-                | "| \(.pkg) | [\(.id)](\(.url // "")) | "
-                  + (if .sev == "CRITICAL" then "🔴 CRIT" else "🟠 HIGH" end)
-                  + " | \(.inst) | \(.fix // "—") |"')
-              details+=$'\n'"<details open><summary><b>$name</b> — $count HIGH/CRITICAL</summary>"$'\n\n'
-              details+="| Package | CVE | Sev | Installed | Fixed |"$'\n'
-              details+="|---|---|---|---|---|"$'\n'
-              details+="$rows"$'\n\n'"</details>"$'\n'
-            else
-              headline="${headline:+$headline · }$name ✅ 0"
-            fi
-          done
-
-          BODY="$RUNNER_TEMP/trivy-image-comment.md"
-          {
-            echo "$MARKER"
-            echo "## 🛡️ Trivy Image Scan"
-            echo ""
-            if [ "$seen" -eq 0 ]; then
-              echo "⚠️ **No image-scan results found** — the scan may not have completed. Do not read this as \"no issues\"; check the [workflow run]($RUN_URL)."
-            elif [ -n "$details" ]; then
-              echo "Fixable **HIGH/CRITICAL** CVEs in built image layers (report-only — not blocking merge):"
-            else
-              echo "✅ No fixable HIGH/CRITICAL CVEs in built image layers."
-            fi
-            echo ""
-            [ -n "$headline" ] && { echo "$headline"; echo ""; }
-            [ -n "$details" ] && printf '%s\n' "$details"
-            echo "Full inventory (all severities + misconfig): **[Security → Code scanning]($SECURITY_URL)** · [workflow run]($RUN_URL)"
-          } > "$BODY"
-
-          # Backstop only: option-A output is compact native Markdown and should stay well under
-          # GitHub's 65536-char comment limit, but keep the guard so a pathological finding count
-          # can never 422 the POST. (No ``` fences here, so no fence-rebalancing needed.)
-          MAX=60000
-          if [ "$(wc -c < "$BODY")" -gt "$MAX" ]; then
-            head -c "$MAX" "$BODY" > "$BODY.tmp" && mv "$BODY.tmp" "$BODY"
-            printf '\n> ⚠️ Output truncated — full tables in the [workflow run](%s) artifacts and the Code scanning tab.\n' "$RUN_URL" >> "$BODY"
-          fi
-
           # Find this comment by its hidden marker (substring match), then PATCH it; POST first time.
           ids=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
                 --jq 'map(select(.body | contains(env.MARKER))) | .[].id')
           id=${ids%%$'\n'*}
           if [ -n "$id" ]; then
-            gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@- < "$BODY"
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@- < "$BODY_FILE"
             echo "Updated sticky image-scan comment ($id)."
           else
-            gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" -F body=@- < "$BODY"
+            gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" -F body=@- < "$BODY_FILE"
             echo "Created sticky image-scan comment."
           fi
