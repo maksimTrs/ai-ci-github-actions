@@ -356,31 +356,7 @@ jobs:
         env:
           COMMIT_SHA: ${{ github.sha }}
           RUN_NUMBER: ${{ github.run_number }}
-        run: |
-          mkdir -p site/backend site/frontend site/api site/e2e site/perf
-
-          cp -r artifacts/backend-test-report/.  site/backend/
-          cp -r artifacts/frontend-test-report/. site/frontend/
-          cp -r artifacts/api-test-report/.      site/api/
-          cp -r artifacts/e2e-test-report/.      site/e2e/
-          cp -r artifacts/perf-test-report/.     site/perf/
-
-          # Backend (single coverage.html) and perf (single perf-results.html) have no
-          # index.html — alias so /backend/ and /perf/ resolve to a default document.
-          if [ -f site/backend/coverage.html ]; then
-            cp site/backend/coverage.html site/backend/index.html
-          fi
-          if [ -f site/perf/perf-results.html ]; then
-            cp site/perf/perf-results.html site/perf/index.html
-          fi
-
-          # Render the landing page from the template. The positional arg restricts
-          # envsubst to these three vars so no other env (e.g., GITHUB_TOKEN) can leak.
-          export SHORT_SHA="${COMMIT_SHA:0:7}"
-          export TIMESTAMP="$(date -u +'%Y-%m-%d %H:%M UTC')"
-          envsubst '$SHORT_SHA $TIMESTAMP $RUN_NUMBER' \
-            < .github/pages/index.template.html \
-            > site/index.html
+        run: bash .github/scripts/compose-pages-site.sh
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9  # v5.0.0
