@@ -745,4 +745,4 @@ pipeline {
 }
 ```
 
-> NOTE: the `cleanup` block needs an explicit `node` because the pipeline runs `agent none` — there's no implicit executor for cleanup unless you allocate one. Use `node('') {}` (empty string = any available executor), NOT bare `node {}` — the declarative parser requires an explicit label parameter and fails at compile time with "Missing required parameter: label" otherwise.
+> NOTE: the `cleanup` block needs an explicit `node` because the pipeline runs `agent none` — there's no implicit executor for cleanup unless you allocate one. Steps like `cleanWs`, `sh`, and `script` fail with "Required context class hudson.FilePath is missing" / "step that requires a node context while agent none was specified" without one. The `node` step's label parameter is optional — bare `node {}` (any available executor) and `node('linux') {}` (a specific label) are both valid here. Prefer a label that matches an executor with the tools cleanup needs; use bare `node {}` only when any executor will do. (The "label is required" rule applies to the `agent { node { label '...' } }` *directive*, not to the `node` step used inside `post`/`script`.)

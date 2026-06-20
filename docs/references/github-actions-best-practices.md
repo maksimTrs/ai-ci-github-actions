@@ -104,21 +104,21 @@ The `setup-java` / `setup-node` / `setup-python` actions handle cache key comput
 
 ```yaml
 # GOOD — Maven
-- uses: actions/setup-java@v4
+- uses: actions/setup-java@v5
   with:
     java-version: '17'
     distribution: 'temurin'
     cache: maven
 
 # GOOD — Gradle
-- uses: actions/setup-java@v4
+- uses: actions/setup-java@v5
   with:
     java-version: '17'
     distribution: 'temurin'
     cache: gradle
 
 # GOOD — Node
-- uses: actions/setup-node@v4
+- uses: actions/setup-node@v5
   with:
     node-version: '20'
     cache: 'npm'   # or 'yarn' or 'pnpm'
@@ -134,7 +134,7 @@ Use `actions/cache` directly only when:
 - Multi-key restore chains for downgraded fallback
 
 ```yaml
-- uses: actions/cache@v4
+- uses: actions/cache@v5
   id: cache-playwright
   with:
     path: ~/.cache/ms-playwright
@@ -189,6 +189,19 @@ Tags are mutable. A compromised maintainer can re-point `@v4` to a malicious com
 ```
 
 Pin by SHA. Comment the human-readable version. Use Dependabot's `package-ecosystem: github-actions` to update SHAs safely.
+
+### Keep action majors current — the Node 24 runtime cutover
+
+SHA pinning is not "set and forget". GitHub forces all JavaScript actions onto the **Node.js 24 runtime as of 2 June 2026** — actions still on an older major (Node 20 runtime) emit deprecation warnings and eventually stop running. Pin the SHA of a current major:
+
+| Action | Current major (2026) |
+|---|---|
+| `actions/checkout` | v5 |
+| `actions/setup-node` | v5 |
+| `actions/setup-java` | v5 |
+| `actions/cache` | v5 |
+
+The examples above use the human-readable major (`@v5`) for readability; in real workflows replace each with the pinned SHA of that major's latest patch and let Dependabot bump it.
 
 ### OIDC over long-lived secrets for cloud auth
 
@@ -500,7 +513,7 @@ publish-allure:
 ### Browser caching for UI tests
 
 ```yaml
-- uses: actions/cache@v4
+- uses: actions/cache@v5
   id: pw-cache
   with:
     path: ~/.cache/ms-playwright

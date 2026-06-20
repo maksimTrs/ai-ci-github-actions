@@ -76,7 +76,7 @@ When writing or reviewing pipeline code, **proactively** flag non-obvious behavi
 - `junit allowEmptyResults: true` hides test-runner crashes — runner died before writing XML, no tests reported, build is "green"
 - Script Approval — first use of certain APIs in sandboxed pipelines requires admin approval; failures look like permission errors
 - `def x = ...` outside `script {}` in declarative is restricted — confusing errors
-- `agent none` + `cleanWs()` / `sh` in `post {}` without `node {}` = `AbortException: step requires a node context`. When switching from `agent any` to `agent none`, immediately audit ALL `post` blocks for steps that need a node (cleanWs, sh, script) and wrap them in `node('') {}`. Use `node('') {}` (empty string label = any executor), NOT bare `node {}` — declarative parser requires an explicit label parameter or it fails at compile time with "Missing required parameter: label"
+- `agent none` + `cleanWs()` / `sh` in `post {}` without a `node` = "Required context class hudson.FilePath is missing" / "step that requires a node context while agent none was specified". When switching from `agent any` to `agent none`, immediately audit ALL `post` blocks for steps that need a node (cleanWs, sh, script) and wrap them in `node(...) {}`. The `node` step's label is optional — bare `node {}` (any executor) and `node('label') {}` (specific label) are both valid; prefer a label matching an executor that has the tools the step needs. (The "label is required" rule applies to the `agent { node { label '...' } }` directive, not to the `node` step used inside `post`/`script`.)
 
 **Cross-platform:**
 - Cache key without lockfile hash → stale cache → mysterious "dependency missing" failures
