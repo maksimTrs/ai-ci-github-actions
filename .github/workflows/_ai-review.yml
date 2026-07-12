@@ -85,6 +85,10 @@ jobs:
         uses: anthropics/claude-code-action@51ea8ea73a139f2a74ff649e3092c25a904aed7e  # v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Render Claude's execution report (turns / budget / tools used) into the job Step Summary.
+          # Lightweight always-on diagnostic: surfaces a truncated or errored review without opening logs,
+          # and never touches the PR thread (Step Summary, not a comment) or the permissions contract.
+          display_report: true
           # TODO: consider --debug-file in claude_args + upload-artifact step with if: failure()
           #       for silent-fail diagnostics (deferred — add only if silent fails actually start appearing)
           # --bare (omitted): would skip auto-loading CLAUDE.md/hooks/MCP from the checkout for stricter
