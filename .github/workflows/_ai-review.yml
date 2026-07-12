@@ -54,7 +54,7 @@ on:
         description: 'claude-code-action --max-turns'
         type: number
         required: false
-        default: 30
+        default: 60
       max_budget_usd:
         description: 'claude-code-action --max-budget-usd'
         type: string
@@ -119,6 +119,17 @@ jobs:
             Step 1 — Review each file. Read `${{ inputs.reference_file }}` for the full project-specific rules.
 
             ${{ inputs.checklist }}
+
+            Step 1.5 — Verify every candidate finding before writing it.
+            For each issue you are about to report, re-check it against the actual diff and confirm it
+            is a real, objective problem you can justify with high confidence. Only findings that
+            survive go into the JSON. Never flag:
+            - pre-existing issues not introduced by this change
+            - anything a linter or formatter already catches
+            - pedantic nits a senior engineer would not raise in review
+            - rules from the reference file that the code deliberately silences with an inline note
+            - problems you cannot confirm without context outside the changed lines
+            False positives erode trust and waste reviewer time; when unsure, leave it out.
 
             Step 2 — Write findings as JSON to `review-output/review-data.json` using the Write tool.
             Get the current UTC timestamp first: date -u +"%Y-%m-%dT%H:%M:%SZ"

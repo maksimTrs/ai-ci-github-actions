@@ -35,7 +35,7 @@ jobs:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
     with:
       # allowed_tools / timeout_minutes / max_turns / max_budget_usd all match the reusable
-      # workflow's defaults (full tool set, 15 min, 30 turns, $5) — omitted here on purpose.
+      # workflow's defaults (full tool set, 15 min, 60 turns, $5) — omitted here on purpose.
       domain: Docker files
       reference_file: docs/references/docker-best-practices.md
       report_title: Docker Review
