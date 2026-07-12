@@ -70,7 +70,10 @@ jobs:
     runs-on: ubuntu-latest
     # Skip bot-authored PRs; on PR events only run for same-repo branches (fork PRs cannot be
     # trusted with the write token). workflow_dispatch is always allowed.
-    if: ${{ !contains(github.actor, '[bot]') && (github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    # `!draft` skips work-in-progress PRs (callers add `ready_for_review` to their triggers so the
+    # first review fires when a draft is marked ready). On workflow_dispatch `pull_request.draft` is
+    # null, and `!null` is true, so a manual run is never blocked by this gate.
+    if: ${{ !contains(github.actor, '[bot]') && !github.event.pull_request.draft && (github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository) }}
     timeout-minutes: ${{ inputs.timeout_minutes }}
     # No `permissions:` here on purpose: the job inherits the calling `uses:` job's grant, which
     # is the effective ceiling anyway. Declaring a wider set here would not raise that ceiling.

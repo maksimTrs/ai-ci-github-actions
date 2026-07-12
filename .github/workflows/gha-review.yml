@@ -3,7 +3,7 @@ name: GitHub Actions Best Practices Review
 on:
   pull_request:
     branches: [main]
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       # GHA filter patterns do not support brace expansion ({yml,yaml}) —
       # list the two extensions explicitly so both conventions are covered.

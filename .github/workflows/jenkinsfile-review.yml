@@ -3,7 +3,7 @@ name: Jenkinsfile Best Practices Review
 on:
   pull_request:
     branches: [main]
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'Jenkinsfile'
   workflow_dispatch:
@@ -18,7 +18,10 @@ concurrency:
 jobs:
   review:
     runs-on: ubuntu-latest
-    if: ${{ !contains(github.actor, '[bot]') && (github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    # `!draft` skips work-in-progress PRs; `ready_for_review` in the triggers fires the first review
+    # when a draft is marked ready. On workflow_dispatch `pull_request.draft` is null (`!null` = true),
+    # so a manual run is never blocked.
+    if: ${{ !contains(github.actor, '[bot]') && !github.event.pull_request.draft && (github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository) }}
     timeout-minutes: 10
     permissions:
       contents: read         # checkout + composite action reads template/scripts from the tree
@@ -36,6 +39,10 @@ jobs:
         uses: anthropics/claude-code-action@51ea8ea73a139f2a74ff649e3092c25a904aed7e  # v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Render Claude's execution report (turns / budget / tools used) into the job Step Summary.
+          # Lightweight always-on diagnostic: surfaces a truncated or errored review without opening logs,
+          # and never touches the PR thread (Step Summary, not a comment) or the permissions contract.
+          display_report: true
           # TODO: consider --debug-file in claude_args + upload-artifact step with if: failure()
           #       for silent-fail diagnostics (deferred — add only if silent fails actually start appearing)
           # --bare (omitted): would skip auto-loading CLAUDE.md/hooks/MCP from the checkout for stricter prompt-injection isolation, but it disables OAuth (requires ANTHROPIC_API_KEY) — we auth via OAuth token here, so add it only when authing with an API key.

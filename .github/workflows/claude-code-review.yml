@@ -3,7 +3,7 @@ name: Claude Code Review
 on:
   pull_request:
     branches: [main]
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, ready_for_review]
     paths-ignore:
       # Areas already covered by specialized reviewers — avoid double review
       - 'Jenkinsfile'
@@ -29,7 +29,9 @@ concurrency:
 jobs:
   claude-review:
     # Skip bot-authored PRs (dependabot/renovate version bumps don't benefit from AI review)
-    if: ${{ !contains(github.actor, '[bot]') && github.event.pull_request.head.repo.full_name == github.repository }}
+    # `!draft` skips work-in-progress PRs; the `ready_for_review` trigger fires the first review
+    # the moment a draft is marked ready, so nothing is missed by skipping the draft phase.
+    if: ${{ !contains(github.actor, '[bot]') && !github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
