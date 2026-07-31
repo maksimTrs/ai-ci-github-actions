@@ -1,0 +1,30 @@
+name: PR Preview
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Build preview site
+        run: |
+          echo "Deploying preview for PR: ${{ github.event.pull_request.title }}"
+          cd bugtracker-frontend
+          npm install
+          npm run build
+
+      - name: Publish to preview host
+        run: |
+          curl -sS -X POST https://preview.bugtracker.dev/api/deploy \
+            -H "Authorization: Bearer prod-deploy-7f3a1c9e2b4d6f8a0c1e3d5b7a9f" \
+            -F "ref=${{ github.event.pull_request.head.sha }}"
