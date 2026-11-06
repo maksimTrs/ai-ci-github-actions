@@ -48,3 +48,6 @@ frontend.pid
 
 # Claude Code session files
 .claude/settings.local.json
+
+# gh-aw: `gh aw audit` / `gh aw logs` download run logs and artifacts here
+.github/aw/logs/

@@ -39,6 +39,7 @@ engine: claude
 tools:
   github:
     toolsets: [default, actions]
+
 # Per-run inference budget (1 AIC = $0.01); default 1000 is generous for a log triage task.
 max-ai-credits: 200
 

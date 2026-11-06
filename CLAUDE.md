@@ -73,8 +73,12 @@ When writing or reviewing pipeline code, **proactively** flag non-obvious behavi
 - The relay's `on.workflow_run.workflows` matches each watched workflow's `name:` **exactly** (`"CI — Build, Test & Report"`, em dash included), not its filename — renaming any watched workflow's `name:` without updating the relay (list **and** `if:`) silently stops coverage.
 - `workflow_run` and `repository_dispatch` both run the workflow file from the default branch. Neither the relay nor CI Doctor can be exercised from their own PR — they start working after merge to `main`.
 - gh-aw's Claude engine accepts **only** `ANTHROPIC_API_KEY`; `CLAUDE_CODE_OAUTH_TOKEN` is ignored. Do not try to reuse the review workflows' OAuth token.
+- The GitHub MCP server gets only the `default` toolsets (`context, repos, issues, pull_requests, users`) unless `tools.github.toolsets` says otherwise — `default` has **no** workflow run / job / log tools. Without `actions`, CI Doctor cannot read the failed run and ends with `report_missing_tool` + `report_incomplete` (and still bills the turns).
 - `safe-outputs.create-issue` requires Issues enabled on the repo; `gh aw compile --validate` fails otherwise. Validate with `gh aw compile <name> --validate --actionlint` before committing.
-- Cost guardrail is the top-level `max-ai-credits:` (1 AIC = $0.01, default 1000). Inspect a run's spend and tool calls with `gh aw audit <run-id>`.
+- `gh aw update` re-pulls the upstream `source:` and would overwrite the local customizations (trigger, `env`, `tools`, budget). Diff against upstream by hand instead of running it blindly.
+- Re-running a CI Doctor run reuses its original commit SHA, i.e. the **old** lock file. After changing `ci-doctor.md`, re-run the **relay** run instead — it emits a fresh dispatch that executes the current `main`.
+- gh-aw opens issues about its own failures (`[aw] CI Failure Doctor: …`) plus a standing `[aw] Detection Runs` tracker — expected, not noise to suppress.
+- Cost guardrail is the top-level `max-ai-credits:` (1 AIC = $0.01, default 1000; a daily cap `GH_AW_DEFAULT_MAX_DAILY_AI_CREDITS` defaults to 5000). Inspect a run's spend and tool calls with `gh aw audit <run-id>` — it downloads into `.github/aw/logs/` (gitignored).
 
 **Jenkins traps:**
 - CPS transformation — closures across `node {}` boundaries get serialized; non-`@NonCPS` `.collect {}` may fail with `NotSerializableException`. Prefer `for (item in items)` in pipelines, mark heavy logic `@NonCPS`.
@@ -183,11 +187,12 @@ The skill ships its own `references/github-actions.md`, `references/docker.md`, 
 | Write new `Jenkinsfile` or `vars/*.groovy` | optional | — | ✓ | — |
 | Write new `Dockerfile*` or `docker-compose*.yml` | optional | — | — | ✓ |
 | Modify AI review workflows (`claude-code-review.yml`, `gha-review.yml`, `jenkinsfile-review.yml`, `docker-review.yml`, `claude.yml`) | — | ✓ | — | — |
+| Modify CI Doctor (`ci-doctor.md`, `ci-doctor-relay.yml`) — read the gh-aw traps above; fetch [gh-aw docs](https://github.github.com/gh-aw/) for frontmatter | — | ✓ | — | — |
 | Cross-platform design decision (parity) | optional | ✓ | ✓ | — |
 
 ### Required secrets
 
-`CLAUDE_CODE_OAUTH_TOKEN` must be set in repository **Settings → Secrets → Actions** for all five Claude-powered workflows to function — four automated review workflows (`claude-code-review.yml`, `gha-review.yml`, `jenkinsfile-review.yml`, `docker-review.yml`) plus the `@claude` mention helper (`claude.yml`). Without it, the Claude action will fail at the authentication step. The token is obtained from [claude.ai/settings](https://claude.ai/settings) under "Claude Code".
+`CLAUDE_CODE_OAUTH_TOKEN` must be set in repository **Settings → Secrets → Actions** for all five Claude-powered workflows to function — four automated review workflows (`claude-code-review.yml`, `gha-review.yml`, `jenkinsfile-review.yml`, `docker-review.yml`) plus the `@claude` mention helper (`claude.yml`). Without it, the Claude action will fail at the authentication step (`401 OAuth access token is invalid` once it expires). Generate it locally with `claude setup-token` (Pro/Max plan) and store it with `gh secret set CLAUDE_CODE_OAUTH_TOKEN` (interactive prompt — keeps the value out of shell history). Run both in a separate terminal, never through a Claude Code session — `setup-token` prints the token in plain text.
 
 `ANTHROPIC_API_KEY` (Anthropic Console, pay-per-token) is required separately by the gh-aw `ci-doctor` workflow — gh-aw does not support OAuth tokens.
 
