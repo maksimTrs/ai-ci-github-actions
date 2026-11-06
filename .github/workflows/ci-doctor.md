@@ -6,12 +6,30 @@ description: |
 
 on:
   workflow_run:
-    # Must match ci.yml `name:` exactly — workflow_run matches by display name, not filename.
-    workflows: ["CI — Build, Test & Report"]
+    # Names must match each workflow's `name:` exactly — workflow_run matches by display name, not filename.
+    workflows:
+      - "CI — Build, Test & Report"
+      - "Claude Code Review"
+      - "GitHub Actions Best Practices Review"
+      - "Jenkinsfile Best Practices Review"
+      - "Docker Best Practices Review"
     types: [completed]
-    branches: [main]
+    # One `branches:` filter applies to all listed workflows, and gh-aw strict mode
+    # (CTR-021) requires a positive scope — so list main + the team's PR branch
+    # prefixes here, and narrow CI to main-only in `if:` below.
+    branches:
+      - main
+      - "feat/**"
+      - "fix/**"
+      - "chore/**"
+      - "docs/**"
 
-if: ${{ github.event.workflow_run.conclusion == 'failure' }}
+# CI: only failures on main (a red PR build is the normal feedback loop, not an incident).
+# AI reviewers: failures on any branch (auth/config breakage, e.g. an expired OAuth token).
+if: >-
+  ${{ github.event.workflow_run.conclusion == 'failure' &&
+  (github.event.workflow_run.name != 'CI — Build, Test & Report' ||
+  github.event.workflow_run.head_branch == 'main') }}
 
 permissions:
   actions: read
