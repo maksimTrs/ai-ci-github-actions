@@ -5,31 +5,20 @@ description: |
   duplicate failures.
 
 on:
-  workflow_run:
-    # Names must match each workflow's `name:` exactly — workflow_run matches by display name, not filename.
-    workflows:
-      - "CI — Build, Test & Report"
-      - "Claude Code Review"
-      - "GitHub Actions Best Practices Review"
-      - "Jenkinsfile Best Practices Review"
-      - "Docker Best Practices Review"
-    types: [completed]
-    # One `branches:` filter applies to all listed workflows, and gh-aw strict mode
-    # (CTR-021) requires a positive scope — so list main + the team's PR branch
-    # prefixes here, and narrow CI to main-only in `if:` below.
-    branches:
-      - main
-      - "feat/**"
-      - "fix/**"
-      - "chore/**"
-      - "docs/**"
+  # Dispatched by ci-doctor-relay.yml, not by workflow_run directly: gh-aw injects
+  # `!github.event.workflow_run.repository.fork` into every workflow_run trigger,
+  # which is always false in a repository that is itself a fork (this one is).
+  # Trigger scoping (which workflows, which branches) lives in the relay.
+  repository_dispatch:
+    types: [ci-doctor-investigate]
+  # The relay dispatches with GITHUB_TOKEN, so the sender is github-actions[bot].
+  bots: [github-actions]
 
-# CI: only failures on main (a red PR build is the normal feedback loop, not an incident).
-# AI reviewers: failures on any branch (auth/config breakage, e.g. an expired OAuth token).
-if: >-
-  ${{ github.event.workflow_run.conclusion == 'failure' &&
-  (github.event.workflow_run.name != 'CI — Build, Test & Report' ||
-  github.event.workflow_run.head_branch == 'main') }}
+# The compiler rejects raw `github.event.client_payload.*` in the prompt (free-form
+# payload = injection vector). The relay sends a JSON number; fromJSON() turns any
+# non-JSON value into an expression error, so only a parsed value reaches the prompt.
+env:
+  CI_DOCTOR_RUN_ID: ${{ fromJSON(github.event.client_payload.run_id) }}
 
 permissions:
   actions: read
@@ -58,9 +47,11 @@ likely root cause and give maintainers specific, evidence-backed next steps.
 ## Run context
 
 - **Repository**: ${{ github.repository }}
-- **Workflow run**: ${{ github.event.workflow_run.id }}
-- **Run URL**: ${{ github.event.workflow_run.html_url }}
-- **Head SHA**: ${{ github.event.workflow_run.head_sha }}
+- **Failed workflow run ID**: ${{ env.CI_DOCTOR_RUN_ID }}
+
+Start by fetching this run's metadata (workflow name, run URL, head branch, head
+SHA, associated pull request, attempt number) from the GitHub API. Only the run
+ID is passed in; treat every other detail as something to look up, not assume.
 
 ## Investigation protocol
 

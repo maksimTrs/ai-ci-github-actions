@@ -1,0 +1,54 @@
+name: CI Doctor Relay
+
+# Bridges workflow_run failures to the gh-aw CI Doctor (ci-doctor.md).
+#
+# Why a relay: gh-aw compiles every workflow_run trigger with a
+# `!github.event.workflow_run.repository.fork` guard and offers no opt-out.
+# This repository is a fork, so a direct workflow_run trigger never activates
+# the agent. The relay owns the trigger scoping and hands CI Doctor only the
+# failed run ID via repository_dispatch.
+#
+# Why repository_dispatch (not workflow_dispatch): gh-aw's role check accepts an
+# allowlisted bot sender (`bots: [github-actions]`) only on repository_dispatch;
+# on workflow_dispatch github-actions[bot] is rejected as "not active".
+# GITHUB_TOKEN-created dispatch events are the documented exception that does
+# start new workflow runs.
+
+on:
+  workflow_run:
+    # Names must match each workflow's `name:` exactly — workflow_run matches by display name, not filename.
+    workflows:
+      - "CI — Build, Test & Report"
+      - "Claude Code Review"
+      - "GitHub Actions Best Practices Review"
+      - "Jenkinsfile Best Practices Review"
+      - "Docker Best Practices Review"
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  dispatch:
+    # - failure only (cancelled/skipped are not incidents)
+    # - CI: main only — a red PR build is the normal feedback loop
+    # - AI reviewers: any branch — failures there are auth/config breakage
+    # - same-repository head only: never relay runs built from fork PRs
+    if: >-
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      (github.event.workflow_run.name != 'CI — Build, Test & Report' ||
+       github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write  # required by POST /repos/{owner}/{repo}/dispatches; no checkout, no repo code runs here
+    steps:
+      - name: Dispatch CI Doctor
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}/dispatches" \
+            -f event_type=ci-doctor-investigate \
+            -F "client_payload[run_id]=${RUN_ID}"
+          echo "Dispatched CI Doctor for run ${RUN_ID}" >> "$GITHUB_STEP_SUMMARY"
