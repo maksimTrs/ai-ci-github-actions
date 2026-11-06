@@ -33,6 +33,12 @@ safe-outputs:
 
 timeout-minutes: 10
 engine: claude
+
+# `default` (context, repos, issues, pull_requests, users) has no workflow run /
+# job / log tools — without `actions` the agent cannot read the failed run at all.
+tools:
+  github:
+    toolsets: [default, actions]
 # Per-run inference budget (1 AIC = $0.01); default 1000 is generous for a log triage task.
 max-ai-credits: 200
 
